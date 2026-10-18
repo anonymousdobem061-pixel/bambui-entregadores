@@ -5,7 +5,7 @@ import './styles.css'
 
 type Status = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; active: boolean }
-type Store = { id: string; name: string }
+type Store = { id: string; name: string; address: string | null; phone: string | null }
 type Delivery = { id: string; order_code: string; customer_name: string; delivery_address: string; notes: string; status: Status; store_id: string | null; courier_id: string | null; created_at: string }
 const projectUrl = 'https://quxgxxffiobgqlotpfnl.supabase.co'
 const publishableKey = 'sb_publishable_mxo_SkEaEzkRKQ9jOLgjlQ_fiOIaZvl'
@@ -31,7 +31,7 @@ function App() {
     if (!current.active) { setNotice('Seu perfil está inativo.'); setLoading(false); return }
     const [deliveryData, storeData, courierData] = await Promise.all([
       supabase.from('deliveries').select('id,order_code,customer_name,delivery_address,notes,status,store_id,courier_id,created_at').order('created_at', { ascending: false }),
-      supabase.from('stores').select('id,name').eq('active', true).order('name'),
+      supabase.from('stores').select('id,name,address,phone').eq('active', true).order('name'),
       current.role === 'admin' ? supabase.from('profiles').select('id,full_name,role,active').eq('role', 'courier').eq('active', true) : Promise.resolve({ data: [], error: null })
     ])
     if (deliveryData.error) setNotice(`Não foi possível carregar as entregas: ${deliveryData.error.message}`)
@@ -65,6 +65,7 @@ function Login({ onNotice, notice }: { onNotice: (value: string) => void; notice
 
 function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice }: { profile: Profile; deliveries: Delivery[]; stores: Store[]; couriers: Profile[]; reload: () => void; notice: string; setNotice: (value: string) => void }) {
   const [formOpen, setFormOpen] = useState(false)
+  const [storesOpen, setStoresOpen] = useState(false)
   const [filter, setFilter] = useState<'all' | Status>('all')
   const isAdmin = profile.role === 'admin'
   const shown = filter === 'all' ? deliveries : deliveries.filter(item => item.status === filter)
@@ -74,8 +75,9 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
     <section className="greeting"><div><b>{isAdmin ? 'Tudo sob controle.' : 'Boa rota!'}</b><p>{isAdmin ? 'Acompanhe os pedidos da cidade em um só lugar.' : 'Veja os pedidos atribuídos a você e avance o status.'}</p></div><span>🏍️</span></section>
     <section className="numbers"><Number title="Aguardando" value={totals.pending} /><Number title="Em rota" value={totals.moving} /><Number title="Concluídas" value={totals.done} /></section>
-    <section className="commands"><div className="tabs">{(['all', 'pending', 'in_progress', 'completed'] as const).map(value => <button key={value} className={filter === value ? 'tab active' : 'tab'} onClick={() => setFilter(value)}>{value === 'all' ? 'Todas' : statusName[value]}</button>)}</div><div className="actions">{isAdmin && <button onClick={() => setFormOpen(true)}>Nova entrega</button>}<button className="ghost" onClick={reload}>Atualizar</button></div></section>
+    <section className="commands"><div className="tabs">{(['all', 'pending', 'in_progress', 'completed'] as const).map(value => <button key={value} className={filter === value ? 'tab active' : 'tab'} onClick={() => setFilter(value)}>{value === 'all' ? 'Todas' : statusName[value]}</button>)}</div><div className="actions">{isAdmin && <button className="ghost" onClick={() => setStoresOpen(true)}>Lojas</button>}{isAdmin && <button onClick={() => setFormOpen(true)}>Nova entrega</button>}<button className="ghost" onClick={reload}>Atualizar</button></div></section>
     {formOpen && <DeliveryForm owner={profile.id} stores={stores} couriers={couriers} close={() => setFormOpen(false)} saved={() => { setFormOpen(false); reload() }} showError={setNotice} />}
+    {storesOpen && <StoreManager stores={stores} close={() => setStoresOpen(false)} saved={reload} showError={setNotice} />}
     <section className="deliveries">{shown.length === 0 ? <div className="empty">Nenhuma entrega nesta lista.</div> : shown.map(delivery => <Card key={delivery.id} item={delivery} store={stores.find(store => store.id === delivery.store_id)} courier={couriers.find(courier => courier.id === delivery.courier_id)} isAdmin={isAdmin} advance={() => void updateStatus(delivery)} />)}</section>
   </main>
 }
@@ -87,5 +89,11 @@ function DeliveryForm({ owner, stores, couriers, close, saved, showError }: { ow
   const [saving, setSaving] = useState(false)
   const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!supabase) return; setSaving(true); const values = new FormData(event.currentTarget); const { error } = await supabase.from('deliveries').insert({ order_code: `BAM-${Date.now()}`, customer_name: String(values.get('customer')), delivery_address: String(values.get('address')), notes: String(values.get('notes') || ''), store_id: String(values.get('store') || '') || null, courier_id: String(values.get('courier') || '') || null, created_by: owner, status: 'pending' }); setSaving(false); if (error) { showError(`Não foi possível salvar: ${error.message}`); return }; saved() }
   return <div className="overlay"><form className="new-form" onSubmit={submit}><header><h2>Nova entrega</h2><button className="ghost" type="button" onClick={close}>Fechar</button></header><label>Cliente<input name="customer" required /></label><label>Endereço<input name="address" required placeholder="Rua, número e bairro" /></label><label>Loja<select name="store"><option value="">Definir depois</option>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label><label>Entregador<select name="courier"><option value="">Atribuir depois</option>{couriers.map(courier => <option key={courier.id} value={courier.id}>{courier.full_name}</option>)}</select></label><label>Observação<textarea name="notes" rows={3} /></label><button disabled={saving}>{saving ? 'Salvando…' : 'Salvar pedido'}</button></form></div>
+}
+
+function StoreManager({ stores, close, saved, showError }: { stores: Store[]; close: () => void; saved: () => void; showError: (value: string) => void }) {
+  const [saving, setSaving] = useState(false)
+  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!supabase) return; setSaving(true); const values = new FormData(event.currentTarget); const { error } = await supabase.from('stores').insert({ name: String(values.get('name')), address: String(values.get('address') || '') || null, phone: String(values.get('phone') || '') || null, active: true }); setSaving(false); if (error) { showError(`Não foi possível cadastrar a loja: ${error.message}`); return }; event.currentTarget.reset(); saved() }
+  return <div className="overlay"><section className="new-form"><header><h2>Lojas parceiras</h2><button className="ghost" type="button" onClick={close}>Fechar</button></header><p className="helper">Cadastre as lojas que aparecerão ao criar uma entrega.</p><form onSubmit={submit}><label>Nome da loja<input name="name" required placeholder="Ex.: Padaria Central" /></label><label>Endereço<input name="address" placeholder="Rua, número e bairro" /></label><label>Telefone<input name="phone" inputMode="tel" placeholder="(00) 00000-0000" /></label><button disabled={saving}>{saving ? 'Salvando…' : 'Cadastrar loja'}</button></form><div className="store-list">{stores.length === 0 ? <p>Nenhuma loja cadastrada.</p> : stores.map(store => <article key={store.id}><b>{store.name}</b>{store.address && <span>📍 {store.address}</span>}{store.phone && <span>☎ {store.phone}</span>}</article>)}</div></section></div>
 }
 createRoot(document.getElementById('root')!).render(<App />)
