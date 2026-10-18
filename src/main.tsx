@@ -8,6 +8,7 @@ type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; activ
 type Store = { id: string; name: string; address: string | null; phone: string | null }
 type Delivery = { id: string; order_code: string; customer_name: string; customer_phone: string | null; delivery_address: string; notes: string; status: Status; store_id: string | null; courier_id: string | null; scheduled_for: string | null; created_at: string }
 type DeliveryMessage = { id: string; author_id: string; body: string; created_at: string }
+type DeliveryView = 'all' | 'today' | 'scheduled' | Status
 const projectUrl = 'https://quxgxxffiobgqlotpfnl.supabase.co'
 const publishableKey = 'sb_publishable_mxo_SkEaEzkRKQ9jOLgjlQ_fiOIaZvl'
 const supabase = createClient(projectUrl, publishableKey)
@@ -15,6 +16,8 @@ const statusName: Record<Status, string> = { pending: 'Aguardando', in_progress:
 const scheduleValue = (value: string | null) => value ? new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''
 const inputScheduleValue = (value: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''
 const scheduleForDatabase = (value: FormDataEntryValue | null) => { const date = typeof value === 'string' && value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date.toISOString() : null }
+const isToday = (value: string | null) => { if (!value) return true; const date = new Date(value); const now = new Date(); return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate() }
+const isFuture = (value: string | null) => Boolean(value && new Date(value).getTime() > new Date().getTime())
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -72,10 +75,13 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   const [storesOpen, setStoresOpen] = useState(false)
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null)
   const [contactDelivery, setContactDelivery] = useState<Delivery | null>(null)
-  const [filter, setFilter] = useState<'all' | Status>('all')
+  const [filter, setFilter] = useState<DeliveryView>('all')
   const [search, setSearch] = useState('')
   const isAdmin = profile.role === 'admin'
-  const shown = (filter === 'all' ? deliveries : deliveries.filter(item => item.status === filter)).filter(item => {
+  const shown = deliveries.filter(item => {
+    if (filter === 'today' && !isToday(item.scheduled_for)) return false
+    if (filter === 'scheduled' && !isFuture(item.scheduled_for)) return false
+    if (filter !== 'all' && filter !== 'today' && filter !== 'scheduled' && item.status !== filter) return false
     const term = search.trim().toLocaleLowerCase('pt-BR')
     return !term || [item.order_code, item.customer_name, item.delivery_address, item.customer_phone ?? ''].some(value => value.toLocaleLowerCase('pt-BR').includes(term))
   })
@@ -86,7 +92,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
     <section className="greeting"><div><b>{isAdmin ? 'Tudo sob controle.' : 'Boa rota!'}</b><p>{isAdmin ? 'Acompanhe os pedidos da cidade em um só lugar.' : 'Veja os pedidos atribuídos a você e avance o status.'}</p></div><span>🏍️</span></section>
     <section className="numbers"><Metric title="Aguardando" value={totals.pending} /><Metric title="Em rota" value={totals.moving} /><Metric title="Concluídas" value={totals.done} /></section>
     <label className="search">🔎 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar por cliente, endereço ou código" aria-label="Buscar entregas" /></label>
-    <section className="commands"><div className="tabs">{(['all', 'pending', 'in_progress', 'completed'] as const).map(value => <button key={value} className={filter === value ? 'tab active' : 'tab'} onClick={() => setFilter(value)}>{value === 'all' ? 'Todas' : statusName[value]}</button>)}</div><div className="actions">{isAdmin && <button className="ghost" onClick={() => setStoresOpen(true)}>Lojas</button>}{isAdmin && <button onClick={() => setFormOpen(true)}>Nova entrega</button>}<button className="ghost" onClick={reload}>Atualizar</button></div></section>
+    <section className="commands"><div className="tabs">{(['today', 'scheduled', 'all', 'pending', 'in_progress', 'completed'] as const).map(value => <button key={value} className={filter === value ? 'tab active' : 'tab'} onClick={() => setFilter(value)}>{value === 'all' ? 'Todas' : value === 'today' ? 'Hoje' : value === 'scheduled' ? 'Agendadas' : statusName[value]}</button>)}</div><div className="actions">{isAdmin && <button className="ghost" onClick={() => setStoresOpen(true)}>Lojas</button>}{isAdmin && <button onClick={() => setFormOpen(true)}>Nova entrega</button>}<button className="ghost" onClick={reload}>Atualizar</button></div></section>
     {formOpen && <DeliveryForm owner={profile.id} stores={stores} couriers={couriers} close={() => setFormOpen(false)} saved={() => { setFormOpen(false); reload() }} showError={setNotice} />}
     {storesOpen && <StoreManager stores={stores} close={() => setStoresOpen(false)} saved={reload} showError={setNotice} />}
     {editingDelivery && <DeliveryEditor item={editingDelivery} stores={stores} couriers={couriers} close={() => setEditingDelivery(null)} saved={() => { setEditingDelivery(null); reload() }} showError={setNotice} />}
