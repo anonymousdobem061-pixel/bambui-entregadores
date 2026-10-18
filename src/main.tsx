@@ -93,7 +93,33 @@ function DeliveryForm({ owner, stores, couriers, close, saved, showError }: { ow
 
 function StoreManager({ stores, close, saved, showError }: { stores: Store[]; close: () => void; saved: () => void; showError: (value: string) => void }) {
   const [saving, setSaving] = useState(false)
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!supabase) return; setSaving(true); const values = new FormData(event.currentTarget); const { error } = await supabase.from('stores').insert({ name: String(values.get('name')), address: String(values.get('address') || '') || null, phone: String(values.get('phone') || '') || null, active: true }); setSaving(false); if (error) { showError(`Não foi possível cadastrar a loja: ${error.message}`); return }; event.currentTarget.reset(); saved() }
-  return <div className="overlay"><section className="new-form"><header><h2>Lojas parceiras</h2><button className="ghost" type="button" onClick={close}>Fechar</button></header><p className="helper">Cadastre as lojas que aparecerão ao criar uma entrega.</p><form onSubmit={submit}><label>Nome da loja<input name="name" required placeholder="Ex.: Padaria Central" /></label><label>Endereço<input name="address" placeholder="Rua, número e bairro" /></label><label>Telefone<input name="phone" inputMode="tel" placeholder="(00) 00000-0000" /></label><button disabled={saving}>{saving ? 'Salvando…' : 'Cadastrar loja'}</button></form><div className="store-list">{stores.length === 0 ? <p>Nenhuma loja cadastrada.</p> : stores.map(store => <article key={store.id}><b>{store.name}</b>{store.address && <span>📍 {store.address}</span>}{store.phone && <span>☎ {store.phone}</span>}</article>)}</div></section></div>
+  const [editing, setEditing] = useState<Store | null>(null)
+  const [name, setName] = useState('')
+  const [address, setAddress] = useState('')
+  const [phone, setPhone] = useState('')
+  const resetForm = () => { setEditing(null); setName(''); setAddress(''); setPhone('') }
+  const startEdit = (store: Store) => { setEditing(store); setName(store.name); setAddress(store.address ?? ''); setPhone(store.phone ?? '') }
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!supabase) return
+    setSaving(true)
+    const values = { name: name.trim(), address: address.trim() || null, phone: phone.trim() || null }
+    const request = editing ? supabase.from('stores').update(values).eq('id', editing.id) : supabase.from('stores').insert({ ...values, active: true })
+    const { error } = await request
+    setSaving(false)
+    if (error) { showError(`Não foi possível salvar a loja: ${error.message}`); return }
+    resetForm()
+    saved()
+  }
+  const deactivate = async (store: Store) => {
+    if (!supabase || !window.confirm(`Desativar ${store.name}? Ela não será apagada e não aparecerá em novas entregas.`)) return
+    setSaving(true)
+    const { error } = await supabase.from('stores').update({ active: false }).eq('id', store.id)
+    setSaving(false)
+    if (error) { showError(`Não foi possível desativar a loja: ${error.message}`); return }
+    if (editing?.id === store.id) resetForm()
+    saved()
+  }
+  return <div className="overlay"><section className="new-form"><header><h2>Lojas parceiras</h2><button className="ghost" type="button" onClick={close}>Fechar</button></header><p className="helper">Cadastre, edite ou desative lojas. Desativar não apaga entregas antigas.</p><form onSubmit={submit}><label>Nome da loja<input value={name} onChange={event => setName(event.target.value)} required placeholder="Ex.: Padaria Central" /></label><label>Endereço<input value={address} onChange={event => setAddress(event.target.value)} placeholder="Rua, número e bairro" /></label><label>Telefone<input value={phone} onChange={event => setPhone(event.target.value)} inputMode="tel" placeholder="(00) 00000-0000" /></label><div className="form-actions"><button disabled={saving}>{saving ? 'Salvando…' : editing ? 'Salvar alterações' : 'Cadastrar loja'}</button>{editing && <button className="ghost" type="button" onClick={resetForm}>Cancelar edição</button>}</div></form><div className="store-list">{stores.length === 0 ? <p>Nenhuma loja cadastrada.</p> : stores.map(store => <article key={store.id}><b>{store.name}</b>{store.address && <span>📍 {store.address}</span>}{store.phone && <span>☎ {store.phone}</span>}<div className="store-actions"><button className="ghost" type="button" onClick={() => startEdit(store)}>Editar</button><button className="danger" type="button" onClick={() => void deactivate(store)}>Desativar</button></div></article>)}</div></section></div>
 }
 createRoot(document.getElementById('root')!).render(<App />)
