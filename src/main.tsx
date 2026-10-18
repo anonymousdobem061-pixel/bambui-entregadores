@@ -231,3 +231,331 @@ function Login({ onNotice, notice }: { onNotice: (value: string) => void; notice
     </main>
   )
 }
+
+
+
+
+
+
+
+
+
+function Home({
+  profile, deliveries, stores, couriers, reload, notice, setNotice,
+}: {
+  profile: Profile
+  deliveries: Delivery[]
+  stores: Store[]
+  couriers: Profile[]
+  reload: () => void
+  notice: string
+  setNotice: (value: string) => void
+}) {
+  const [formOpen, setFormOpen] = useState(false)
+  const [storesOpen, setStoresOpen] = useState(false)
+  const [couriersOpen, setCouriersOpen] = useState(false)
+  const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null)
+  const [contactDelivery, setContactDelivery] = useState<Delivery | null>(null)
+  const [filter, setFilter] = useState<DeliveryView>('all')
+  const [search, setSearch] = useState('')
+  const isAdmin = profile.role === 'admin'
+
+  const unassignedCount = deliveries.filter(
+    item => !item.courier_id && item.status !== 'completed' && item.status !== 'cancelled',
+  ).length
+
+  const overdueCount = deliveries.filter(isOverdue).length
+
+  const shown = deliveries
+    .filter(item => {
+      if (filter === 'today' && !isTodayDelivery(item)) return false
+      if (filter === 'scheduled' && !isFuture(item.scheduled_for)) return false
+      if (
+        filter === 'unassigned' &&
+        (item.courier_id || item.status === 'completed' || item.status === 'cancelled')
+      ) return false
+      if (filter === 'overdue' && !isOverdue(item)) return false
+      if (
+        filter !== 'all' &&
+        filter !== 'today' &&
+        filter !== 'scheduled' &&
+        filter !== 'unassigned' &&
+        filter !== 'overdue' &&
+        item.status !== filter
+      ) return false
+
+      const term = search.trim().toLocaleLowerCase('pt-BR')
+      return (
+        !term ||
+        [item.order_code, item.customer_name, item.delivery_address, item.customer_phone ?? '']
+          .some(value => value.toLocaleLowerCase('pt-BR').includes(term))
+      )
+    })
+    .sort((left, right) => Number(right.priority === 'high') - Number(left.priority === 'high'))
+
+  const totals = useMemo(() => {
+    const today = deliveries.filter(isTodayDelivery)
+    return {
+      pending: today.filter(item => item.status === 'pending').length,
+      moving: today.filter(item => item.status === 'in_progress').length,
+      done: today.filter(item => item.status === 'completed').length,
+    }
+  }, [deliveries])
+
+  const updateStatus = async (delivery: Delivery) => {
+    const next: Status | null =
+      delivery.status === 'pending'
+        ? 'in_progress'
+        : delivery.status === 'in_progress'
+          ? 'completed'
+          : null
+
+    if (!next) return
+
+    if (next === 'completed' && delivery.confirmation_code) {
+      const typedCode = window
+        .prompt('Peça ao cliente o código de confirmação de 4 dígitos.')
+        ?.trim()
+
+      if (typedCode !== delivery.confirmation_code) {
+        setNotice('Código de confirmação incorreto. A entrega continua em rota.')
+        return
+      }
+    }
+
+    const { error } = await supabase
+      .from('deliveries')
+      .update({ status: next })
+      .eq('id', delivery.id)
+
+    if (error) {
+      setNotice(`Não foi possível atualizar: ${error.message}`)
+      return
+    }
+
+    reload()
+  }
+
+  return (
+    <main className="shell">
+      <header>
+        <div className="logo">B</div>
+        <div className="heading">
+          <span>BAMBUÍ ENTREGADORES</span>
+          <h1>{isAdmin ? 'Visão de hoje' : `Olá, ${profile.full_name || 'entregador'}`}</h1>
+        </div>
+        <button className="ghost" onClick={() => void supabase.auth.signOut()}>Sair</button>
+      </header>
+
+      {notice && (
+        <div className="notice">
+          {notice}
+          <button onClick={() => setNotice('')}>×</button>
+        </div>
+      )}
+
+      <section className="greeting">
+        <div>
+          <b>{isAdmin ? 'Tudo sob controle.' : 'Boa rota!'}</b>
+          <p>
+            {isAdmin
+              ? 'Acompanhe os pedidos da cidade em um só lugar.'
+              : 'Veja os pedidos atribuídos a você e avance o status.'}
+          </p>
+        </div>
+        <span>🏍️</span>
+      </section>
+
+      <section className="numbers">
+        <Metric title="Aguardando" value={totals.pending} />
+        <Metric title="Em rota" value={totals.moving} />
+        <Metric title="Concluídas" value={totals.done} />
+      </section>
+
+      <label className="search">
+        🔎
+        <input
+          value={search}
+          onChange={event => setSearch(event.target.value)}
+          placeholder="Buscar por cliente, endereço ou código"
+        />
+      </label>
+
+      <section className="commands">
+        <div className="tabs">
+          {(['today', 'scheduled', 'all', 'pending', 'in_progress', 'completed'] as const).map(value => (
+            <button
+              key={value}
+              className={filter === value ? 'tab active' : 'tab'}
+              onClick={() => setFilter(value)}
+            >
+              {value === 'all'
+                ? 'Todas'
+                : value === 'today'
+                  ? 'Hoje'
+                  : value === 'scheduled'
+                    ? 'Agendadas'
+                    : statusName[value]}
+            </button>
+          ))}
+        </div>
+
+        <div className="actions">
+          {isAdmin && (
+            <button
+              className={filter === 'overdue' ? 'danger' : 'ghost'}
+              onClick={() => setFilter('overdue')}
+            >
+              Atrasadas{overdueCount ? ` (${overdueCount})` : ''}
+            </button>
+          )}
+
+          {isAdmin && (
+            <button
+              className={filter === 'unassigned' ? 'tab active' : 'ghost'}
+              onClick={() => setFilter('unassigned')}
+            >
+              Sem entregador{unassignedCount ? ` (${unassignedCount})` : ''}
+            </button>
+          )}
+
+          {isAdmin && <button className="ghost" onClick={() => setStoresOpen(true)}>Lojas</button>}
+          {isAdmin && <button className="ghost" onClick={() => setCouriersOpen(true)}>Entregadores</button>}
+          {isAdmin && <button onClick={() => setFormOpen(true)}>Nova entrega</button>}
+          <button className="ghost" onClick={reload}>Atualizar</button>
+        </div>
+      </section>
+
+      {formOpen && (
+        <DeliveryForm
+          owner={profile.id}
+          stores={stores}
+          couriers={couriers}
+          close={() => setFormOpen(false)}
+          saved={() => { setFormOpen(false); reload() }}
+          showError={setNotice}
+        />
+      )}
+
+      {storesOpen && (
+        <StoreManager
+          stores={stores}
+          close={() => setStoresOpen(false)}
+          saved={reload}
+          showError={setNotice}
+        />
+      )}
+
+      {couriersOpen && (
+        <CourierManager
+          couriers={couriers}
+          close={() => setCouriersOpen(false)}
+          saved={reload}
+          showError={setNotice}
+        />
+      )}
+
+      {editingDelivery && (
+        <DeliveryEditor
+          item={editingDelivery}
+          stores={stores}
+          couriers={couriers}
+          close={() => setEditingDelivery(null)}
+          saved={() => { setEditingDelivery(null); reload() }}
+          showError={setNotice}
+        />
+      )}
+
+      {contactDelivery && (
+        <ContactPanel
+          item={contactDelivery}
+          viewerId={profile.id}
+          close={() => setContactDelivery(null)}
+          showError={setNotice}
+        />
+      )}
+
+      <section className="deliveries">
+        {shown.length === 0 ? (
+          <div className="empty">Nenhuma entrega nesta lista.</div>
+        ) : (
+          shown.map(delivery => (
+            <Card
+              key={delivery.id}
+              item={delivery}
+              store={stores.find(store => store.id === delivery.store_id)}
+              courier={couriers.find(courier => courier.id === delivery.courier_id)}
+              isAdmin={isAdmin}
+              advance={() => void updateStatus(delivery)}
+              edit={() => setEditingDelivery(delivery)}
+              contact={() => setContactDelivery(delivery)}
+            />
+          ))
+        )}
+      </section>
+    </main>
+  )
+}
+
+function Metric({ title, value }: { title: string; value: number }) {
+  return <article className="number"><small>{title}</small><strong>{value}</strong></article>
+}
+
+function Card({
+  item, store, courier, isAdmin, advance, edit, contact,
+}: {
+  item: Delivery
+  store?: Store
+  courier?: Profile
+  isAdmin: boolean
+  advance: () => void
+  edit: () => void
+  contact: () => void
+}) {
+  const canAdvance = item.status === 'pending' || item.status === 'in_progress'
+
+  return (
+    <article className="card">
+      <div className="card-head">
+        <span className={`pill ${item.status}`}>{statusName[item.status]}</span>
+        <small>{item.order_code}</small>
+      </div>
+
+      <h2>{item.customer_name}</h2>
+      {item.priority === 'high' && <p className="priority">⚡ Prioridade alta</p>}
+      {isOverdue(item) && <p className="cancel-reason">⚠ Entrega atrasada</p>}
+      <p>📍 {item.delivery_address}</p>
+      {item.scheduled_for && <p>🗓️ Agendada: {scheduleValue(item.scheduled_for)}</p>}
+      {store && <p>🏪 {store.name}</p>}
+      {isAdmin && <p>🛵 {courier?.full_name || 'Sem entregador'}</p>}
+
+      {isAdmin && item.confirmation_code && item.status !== 'completed' && item.status !== 'cancelled' && (
+        <p className="confirmation-code">
+          🔐 Código para concluir: <b>{item.confirmation_code}</b>
+        </p>
+      )}
+
+      {item.notes && <p className="notes">{item.notes}</p>}
+      {item.status === 'cancelled' && item.cancellation_reason && (
+        <p className="cancel-reason">Cancelamento: {item.cancellation_reason}</p>
+      )}
+
+      <footer>
+        <button className="ghost" onClick={contact}>Contato</button>
+        <a
+          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.delivery_address)}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Abrir rota
+        </a>
+        {isAdmin && <button className="ghost" onClick={edit}>Editar</button>}
+        {canAdvance && (
+          <button onClick={advance}>
+            {item.status === 'pending' ? 'Iniciar' : 'Concluir'}
+          </button>
+        )}
+      </footer>
+    </article>
+  )
+}
