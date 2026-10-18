@@ -18,7 +18,8 @@ const priorityName: Record<Priority, string> = { normal: 'Normal', high: 'Priori
 const scheduleValue = (value: string | null) => value ? new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''
 const inputScheduleValue = (value: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''
 const scheduleForDatabase = (value: FormDataEntryValue | null) => { const date = typeof value === 'string' && value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date.toISOString() : null }
-const isToday = (value: string | null) => { if (!value) return true; const date = new Date(value); const now = new Date(); return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate() }
+const isToday = (value: string) => { const date = new Date(value); const now = new Date(); return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate() }
+const isTodayDelivery = (item: Delivery) => isToday(item.scheduled_for ?? item.created_at)
 const isFuture = (value: string | null) => Boolean(value && new Date(value).getTime() > new Date().getTime())
 const isOverdue = (item: Delivery) => Boolean(item.scheduled_for && new Date(item.scheduled_for).getTime() < new Date().getTime() && item.status !== 'completed' && item.status !== 'cancelled')
 
@@ -85,7 +86,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   const unassignedCount = deliveries.filter(item => !item.courier_id && item.status !== 'completed' && item.status !== 'cancelled').length
   const overdueCount = deliveries.filter(isOverdue).length
   const shown = deliveries.filter(item => {
-    if (filter === 'today' && !isToday(item.scheduled_for)) return false
+    if (filter === 'today' && !isTodayDelivery(item)) return false
     if (filter === 'scheduled' && !isFuture(item.scheduled_for)) return false
     if (filter === 'unassigned' && (item.courier_id || item.status === 'completed' || item.status === 'cancelled')) return false
     if (filter === 'overdue' && !isOverdue(item)) return false
@@ -93,7 +94,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
     const term = search.trim().toLocaleLowerCase('pt-BR')
     return !term || [item.order_code, item.customer_name, item.delivery_address, item.customer_phone ?? ''].some(value => value.toLocaleLowerCase('pt-BR').includes(term))
   }).sort((left, right) => Number(right.priority === 'high') - Number(left.priority === 'high'))
-  const totals = useMemo(() => ({ pending: deliveries.filter(item => item.status === 'pending').length, moving: deliveries.filter(item => item.status === 'in_progress').length, done: deliveries.filter(item => item.status === 'completed').length }), [deliveries])
+  const totals = useMemo(() => { const today = deliveries.filter(isTodayDelivery); return { pending: today.filter(item => item.status === 'pending').length, moving: today.filter(item => item.status === 'in_progress').length, done: today.filter(item => item.status === 'completed').length } }, [deliveries])
   const updateStatus = async (delivery: Delivery) => { if (!supabase) return; const next: Status | null = delivery.status === 'pending' ? 'in_progress' : delivery.status === 'in_progress' ? 'completed' : null; if (!next) return; const { error } = await supabase.from('deliveries').update({ status: next }).eq('id', delivery.id); if (error) { setNotice(`Não foi possível atualizar: ${error.message}`); return }; reload() }
   return <main className="shell"><header><div className="logo">B</div><div className="heading"><span>BAMBUÍ ENTREGADORES</span><h1>{isAdmin ? 'Visão de hoje' : `Olá, ${profile.full_name || 'entregador'}`}</h1></div><button className="ghost" onClick={() => void supabase?.auth.signOut()}>Sair</button></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
