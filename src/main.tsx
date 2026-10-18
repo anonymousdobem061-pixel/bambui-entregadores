@@ -7,7 +7,7 @@ type Status = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type Priority = 'normal' | 'high'
 type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; active: boolean }
 type Store = { id: string; name: string; address: string | null; phone: string | null }
-type Delivery = { id: string; order_code: string; customer_name: string; customer_phone: string | null; delivery_address: string; notes: string; cancellation_reason: string | null; confirmation_code: string | null; customer_access_token: string | null; arrived_at: string | null; priority: Priority; status: Status; store_id: string | null; courier_id: string | null; scheduled_for: string | null; created_at: string }
+type Delivery = { id: string; order_code: string; customer_name: string; customer_phone: string | null; delivery_address: string; notes: string; cancellation_reason: string | null; confirmation_code: string | null; customer_access_token: string | null; accepted_at: string | null; collected_at: string | null; arrived_at: string | null; completed_at: string | null; priority: Priority; status: Status; store_id: string | null; courier_id: string | null; scheduled_for: string | null; created_at: string }
 type CustomerDelivery = { order_code: string; customer_name: string; status: Status; confirmation_code: string | null }
 type DeliveryMessage = { id: string; author_id: string; body: string; created_at: string }
 type DeliveryView = 'all' | 'today' | 'scheduled' | 'unassigned' | 'overdue' | Status
@@ -44,7 +44,7 @@ function App() {
     setProfile(current)
     if (!current.active) { setNotice('Seu perfil está inativo.'); setLoading(false); return }
     const [deliveryData, storeData, courierData] = await Promise.all([
-      supabase.from('deliveries').select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,confirmation_code,arrived_at,priority,status,store_id,courier_id,scheduled_for,created_at').order('created_at', { ascending: false }),
+      supabase.from('deliveries').select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,confirmation_code,accepted_at,collected_at,arrived_at,completed_at,priority,status,store_id,courier_id,scheduled_for,created_at').order('created_at', { ascending: false }),
       supabase.from('stores').select('id,name,address,phone').eq('active', true).order('name'),
       current.role === 'admin' ? supabase.from('profiles').select('id,full_name,role,active').eq('role', 'courier').order('full_name') : Promise.resolve({ data: [], error: null })
     ])
@@ -109,13 +109,15 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   const totals = useMemo(() => { const today = deliveries.filter(isTodayDelivery); return { pending: today.filter(item => item.status === 'pending').length, moving: today.filter(item => item.status === 'in_progress').length, done: today.filter(item => item.status === 'completed').length } }, [deliveries])
   const updateStatus = async (delivery: Delivery) => {
     if (!supabase) return
+    if (delivery.status === 'pending' && !delivery.accepted_at) { const { error } = await supabase.from('deliveries').update({ accepted_at: new Date().toISOString() }).eq('id', delivery.id); if (error) { setNotice(`Não foi possível aceitar: ${error.message}`); return }; reload(); return }
     const next: Status | null = delivery.status === 'pending' ? 'in_progress' : delivery.status === 'in_progress' ? 'completed' : null
     if (!next) return
     if (next === 'completed' && delivery.confirmation_code) {
       const typedCode = window.prompt('Peça ao cliente o código de confirmação de 4 dígitos.')?.trim()
       if (typedCode !== delivery.confirmation_code) { setNotice('Código de confirmação incorreto. A entrega continua em rota.'); return }
     }
-    const { error } = await supabase.from('deliveries').update({ status: next }).eq('id', delivery.id)
+    const update = delivery.status === 'pending' && !delivery.accepted_at ? { accepted_at: new Date().toISOString() } : { status: next, collected_at: next === 'in_progress' ? new Date().toISOString() : null, completed_at: next === 'completed' ? new Date().toISOString() : null }
+    const { error } = await supabase.from('deliveries').update(update).eq('id', delivery.id)
     if (error) { setNotice(`Não foi possível atualizar: ${error.message}`); return }
     reload()
   }
@@ -136,7 +138,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
 }
 
 function Metric({ title, value }: { title: string; value: number }) { return <article className="number"><small>{title}</small><strong>{value}</strong></article> }
-function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact }: { item: Delivery; store?: Store; courier?: Profile; isAdmin: boolean; advance: () => void; arrive: () => void; edit: () => void; contact: () => void }) { const canAdvance = item.status === 'pending' || item.status === 'in_progress'; return <article className="card"><div className="card-head"><span className={`pill ${item.status}`}>{statusName[item.status]}</span><small>{item.order_code}</small></div><h2>{item.customer_name}</h2>{item.priority === 'high' && <p className="priority">⚡ {priorityName[item.priority]}</p>}{isOverdue(item) && <p className="cancel-reason">⚠ Entrega atrasada</p>}<p>📍 {item.delivery_address}</p>{item.scheduled_for && <p>🗓️ Agendada: {scheduleValue(item.scheduled_for)}</p>}{item.arrived_at && <p className="notes">📍 Chegou: {scheduleValue(item.arrived_at)}</p>}{store && <p>🏪 {store.name}</p>}{isAdmin && <p>🛵 {courier?.full_name || 'Sem entregador'}</p>}{item.notes && <p className="notes">{item.notes}</p>}{item.status === 'cancelled' && item.cancellation_reason && <p className="cancel-reason">Cancelamento: {item.cancellation_reason}</p>}<footer><button className="ghost" onClick={contact}>Contato</button><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.delivery_address)}`} target="_blank" rel="noreferrer">Abrir rota</a>{isAdmin && <button className="ghost" onClick={edit}>Editar</button>}{item.status === 'in_progress' && !item.arrived_at && <button className="ghost" onClick={arrive}>Cheguei ao local</button>}{canAdvance && <button onClick={advance}>{item.status === 'pending' ? 'Iniciar' : 'Concluir'}</button>}</footer></article> }
+function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact }: { item: Delivery; store?: Store; courier?: Profile; isAdmin: boolean; advance: () => void; arrive: () => void; edit: () => void; contact: () => void }) { const canAdvance = item.status === 'pending' || item.status === 'in_progress'; const actionLabel = item.status === 'pending' ? item.accepted_at ? 'Confirmar coleta' : 'Aceitar entrega' : 'Concluir'; return <article className="card"><div className="card-head"><span className={`pill ${item.status}`}>{item.status === 'pending' && item.accepted_at ? 'A caminho da loja' : statusName[item.status]}</span><small>{item.order_code}</small></div><h2>{item.customer_name}</h2>{item.priority === 'high' && <p className="priority">⚡ {priorityName[item.priority]}</p>}{isOverdue(item) && <p className="cancel-reason">⚠ Entrega atrasada</p>}<p>📍 {item.delivery_address}</p>{store && <p>🏪 {store.name}</p>}{item.collected_at && <p className="notes">📦 Coletado: {scheduleValue(item.collected_at)}</p>}{item.arrived_at && <p className="notes">📍 Chegou: {scheduleValue(item.arrived_at)}</p>}{item.completed_at && <p className="notes">✅ Entregue: {scheduleValue(item.completed_at)}</p>}{item.scheduled_for && <p>🗓️ Agendada: {scheduleValue(item.scheduled_for)}</p>}{isAdmin && <p>🛵 {courier?.full_name || 'Sem entregador'}</p>}{item.notes && <p className="notes">{item.notes}</p>}{item.status === 'cancelled' && item.cancellation_reason && <p className="cancel-reason">Cancelamento: {item.cancellation_reason}</p>}<footer><button className="ghost" onClick={contact}>Contato</button><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.delivery_address)}`} target="_blank" rel="noreferrer">Abrir rota</a>{isAdmin && <button className="ghost" onClick={edit}>Editar</button>}{item.status === 'in_progress' && !item.arrived_at && <button className="ghost" onClick={arrive}>Cheguei ao local</button>}{canAdvance && <button onClick={advance}>{actionLabel}</button>}</footer></article> }
 
 function ContactPanel({ item, viewerId, close, showError }: { item: Delivery; viewerId: string; close: () => void; showError: (value: string) => void }) {
   const [messages, setMessages] = useState<DeliveryMessage[]>([])
