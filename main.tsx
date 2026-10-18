@@ -7,8 +7,8 @@ type Status = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; active: boolean }
 type Store = { id: string; name: string }
 type Delivery = { id: string; order_code: string; customer_name: string; delivery_address: string; notes: string; status: Status; store_id: string | null; courier_id: string | null; created_at: string }
-const projectUrl = 'https://uptztveeotvpkhnckvlg.supabase.co'
-const publishableKey = 'sb_publishable_w0lw3tF_KMCynUApLBi53g_vlJinpxP'
+const projectUrl = 'https://quxgxxffiobgqlotpfnl.supabase.co'
+const publishableKey = 'sb_publishable_mxo_SkEaEzkRKQ9jOLgjlQ_fiOIaZvl'
 const supabase = createClient(projectUrl, publishableKey)
 const statusName: Record<Status, string> = { pending: 'Aguardando', in_progress: 'Em rota', completed: 'Concluída', cancelled: 'Cancelada' }
 
