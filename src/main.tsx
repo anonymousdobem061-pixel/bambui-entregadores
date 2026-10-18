@@ -7,6 +7,7 @@ type Status = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; active: boolean }
 type Store = { id: string; name: string; address: string | null; phone: string | null }
 type Delivery = { id: string; order_code: string; customer_name: string; customer_phone: string | null; delivery_address: string; notes: string; status: Status; store_id: string | null; courier_id: string | null; scheduled_for: string | null; created_at: string }
+type DeliveryMessage = { id: string; author_id: string; body: string; created_at: string }
 const projectUrl = 'https://quxgxxffiobgqlotpfnl.supabase.co'
 const publishableKey = 'sb_publishable_mxo_SkEaEzkRKQ9jOLgjlQ_fiOIaZvl'
 const supabase = createClient(projectUrl, publishableKey)
@@ -70,6 +71,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   const [formOpen, setFormOpen] = useState(false)
   const [storesOpen, setStoresOpen] = useState(false)
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null)
+  const [contactDelivery, setContactDelivery] = useState<Delivery | null>(null)
   const [filter, setFilter] = useState<'all' | Status>('all')
   const [search, setSearch] = useState('')
   const isAdmin = profile.role === 'admin'
@@ -88,12 +90,42 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
     {formOpen && <DeliveryForm owner={profile.id} stores={stores} couriers={couriers} close={() => setFormOpen(false)} saved={() => { setFormOpen(false); reload() }} showError={setNotice} />}
     {storesOpen && <StoreManager stores={stores} close={() => setStoresOpen(false)} saved={reload} showError={setNotice} />}
     {editingDelivery && <DeliveryEditor item={editingDelivery} stores={stores} couriers={couriers} close={() => setEditingDelivery(null)} saved={() => { setEditingDelivery(null); reload() }} showError={setNotice} />}
-    <section className="deliveries">{shown.length === 0 ? <div className="empty">Nenhuma entrega nesta lista.</div> : shown.map(delivery => <Card key={delivery.id} item={delivery} store={stores.find(store => store.id === delivery.store_id)} courier={couriers.find(courier => courier.id === delivery.courier_id)} isAdmin={isAdmin} advance={() => void updateStatus(delivery)} edit={() => setEditingDelivery(delivery)} />)}</section>
+    {contactDelivery && <ContactPanel item={contactDelivery} viewerId={profile.id} close={() => setContactDelivery(null)} showError={setNotice} />}
+    <section className="deliveries">{shown.length === 0 ? <div className="empty">Nenhuma entrega nesta lista.</div> : shown.map(delivery => <Card key={delivery.id} item={delivery} store={stores.find(store => store.id === delivery.store_id)} courier={couriers.find(courier => courier.id === delivery.courier_id)} isAdmin={isAdmin} advance={() => void updateStatus(delivery)} edit={() => setEditingDelivery(delivery)} contact={() => setContactDelivery(delivery)} />)}</section>
   </main>
 }
 
 function Metric({ title, value }: { title: string; value: number }) { return <article className="number"><small>{title}</small><strong>{value}</strong></article> }
-function Card({ item, store, courier, isAdmin, advance, edit }: { item: Delivery; store?: Store; courier?: Profile; isAdmin: boolean; advance: () => void; edit: () => void }) { const canAdvance = item.status === 'pending' || item.status === 'in_progress'; return <article className="card"><div className="card-head"><span className={`pill ${item.status}`}>{statusName[item.status]}</span><small>{item.order_code}</small></div><h2>{item.customer_name}</h2>{item.customer_phone && <p>☎ {item.customer_phone}</p>}<p>📍 {item.delivery_address}</p>{item.scheduled_for && <p>🗓️ Agendada: {scheduleValue(item.scheduled_for)}</p>}{store && <p>🏪 {store.name}</p>}{isAdmin && <p>🛵 {courier?.full_name || 'Sem entregador'}</p>}{item.notes && <p className="notes">{item.notes}</p>}<footer>{item.customer_phone && <a href={`tel:${item.customer_phone}`}>Ligar</a>}<a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.delivery_address)}`} target="_blank" rel="noreferrer">Abrir rota</a>{isAdmin && <button className="ghost" onClick={edit}>Editar</button>}{canAdvance && <button onClick={advance}>{item.status === 'pending' ? 'Iniciar' : 'Concluir'}</button>}</footer></article> }
+function Card({ item, store, courier, isAdmin, advance, edit, contact }: { item: Delivery; store?: Store; courier?: Profile; isAdmin: boolean; advance: () => void; edit: () => void; contact: () => void }) { const canAdvance = item.status === 'pending' || item.status === 'in_progress'; return <article className="card"><div className="card-head"><span className={`pill ${item.status}`}>{statusName[item.status]}</span><small>{item.order_code}</small></div><h2>{item.customer_name}</h2><p>📍 {item.delivery_address}</p>{item.scheduled_for && <p>🗓️ Agendada: {scheduleValue(item.scheduled_for)}</p>}{store && <p>🏪 {store.name}</p>}{isAdmin && <p>🛵 {courier?.full_name || 'Sem entregador'}</p>}{item.notes && <p className="notes">{item.notes}</p>}<footer><button className="ghost" onClick={contact}>Contato</button><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.delivery_address)}`} target="_blank" rel="noreferrer">Abrir rota</a>{isAdmin && <button className="ghost" onClick={edit}>Editar</button>}{canAdvance && <button onClick={advance}>{item.status === 'pending' ? 'Iniciar' : 'Concluir'}</button>}</footer></article> }
+
+function ContactPanel({ item, viewerId, close, showError }: { item: Delivery; viewerId: string; close: () => void; showError: (value: string) => void }) {
+  const [messages, setMessages] = useState<DeliveryMessage[]>([])
+  const [loading, setLoading] = useState(true)
+  const [sending, setSending] = useState(false)
+  const loadMessages = async () => {
+    if (!supabase) return
+    setLoading(true)
+    const { data, error } = await supabase.from('delivery_messages').select('id,author_id,body,created_at').eq('delivery_id', item.id).order('created_at')
+    setLoading(false)
+    if (error) { showError(`Não foi possível carregar as mensagens: ${error.message}`); return }
+    setMessages((data ?? []) as DeliveryMessage[])
+  }
+  useEffect(() => { void loadMessages() }, [item.id])
+  const send = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!supabase) return
+    const values = new FormData(event.currentTarget)
+    const body = String(values.get('message') || '').trim()
+    if (!body) return
+    setSending(true)
+    const { error } = await supabase.from('delivery_messages').insert({ delivery_id: item.id, author_id: viewerId, body })
+    setSending(false)
+    if (error) { showError(`Não foi possível enviar a mensagem: ${error.message}`); return }
+    event.currentTarget.reset()
+    void loadMessages()
+  }
+  return <div className="overlay"><section className="new-form contact-panel"><header><h2>Contato da entrega</h2><button className="ghost" type="button" onClick={close}>Fechar</button></header><p className="helper">{item.order_code} · {item.customer_name}</p>{item.customer_phone ? <a className="call-customer" href={`tel:${item.customer_phone}`}>Ligar para o cliente</a> : <p className="helper">Telefone do cliente não informado.</p>}<h3>Mensagens com a equipe</h3><div className="messages">{loading ? <p>Carregando mensagens…</p> : messages.length === 0 ? <p>Nenhuma mensagem ainda.</p> : messages.map(message => <article className={message.author_id === viewerId ? 'mine' : ''} key={message.id}><span>{message.author_id === viewerId ? 'Você' : 'Equipe'}</span><p>{message.body}</p><small>{new Date(message.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></article>)}</div><form onSubmit={send}><label>Nova mensagem<textarea name="message" rows={3} maxLength={1000} placeholder="Escreva uma mensagem para a equipe" required /></label><button disabled={sending}>{sending ? 'Enviando…' : 'Enviar mensagem'}</button></form></section></div>
+}
 
 function DeliveryForm({ owner, stores, couriers, close, saved, showError }: { owner: string; stores: Store[]; couriers: Profile[]; close: () => void; saved: () => void; showError: (value: string) => void }) {
   const [saving, setSaving] = useState(false)
