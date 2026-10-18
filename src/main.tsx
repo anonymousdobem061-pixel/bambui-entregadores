@@ -9,7 +9,7 @@ type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; activ
 type Store = { id: string; name: string; address: string | null; phone: string | null }
 type Delivery = { id: string; order_code: string; customer_name: string; customer_phone: string | null; delivery_address: string; notes: string; cancellation_reason: string | null; priority: Priority; status: Status; store_id: string | null; courier_id: string | null; scheduled_for: string | null; created_at: string }
 type DeliveryMessage = { id: string; author_id: string; body: string; created_at: string }
-type DeliveryView = 'all' | 'today' | 'scheduled' | Status
+type DeliveryView = 'all' | 'today' | 'scheduled' | 'unassigned' | Status
 const projectUrl = 'https://quxgxxffiobgqlotpfnl.supabase.co'
 const publishableKey = 'sb_publishable_mxo_SkEaEzkRKQ9jOLgjlQ_fiOIaZvl'
 const supabase = createClient(projectUrl, publishableKey)
@@ -81,9 +81,11 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   const [filter, setFilter] = useState<DeliveryView>('all')
   const [search, setSearch] = useState('')
   const isAdmin = profile.role === 'admin'
+  const unassignedCount = deliveries.filter(item => !item.courier_id && item.status !== 'completed' && item.status !== 'cancelled').length
   const shown = deliveries.filter(item => {
     if (filter === 'today' && !isToday(item.scheduled_for)) return false
     if (filter === 'scheduled' && !isFuture(item.scheduled_for)) return false
+    if (filter === 'unassigned' && (item.courier_id || item.status === 'completed' || item.status === 'cancelled')) return false
     if (filter !== 'all' && filter !== 'today' && filter !== 'scheduled' && item.status !== filter) return false
     const term = search.trim().toLocaleLowerCase('pt-BR')
     return !term || [item.order_code, item.customer_name, item.delivery_address, item.customer_phone ?? ''].some(value => value.toLocaleLowerCase('pt-BR').includes(term))
@@ -95,7 +97,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
     <section className="greeting"><div><b>{isAdmin ? 'Tudo sob controle.' : 'Boa rota!'}</b><p>{isAdmin ? 'Acompanhe os pedidos da cidade em um só lugar.' : 'Veja os pedidos atribuídos a você e avance o status.'}</p></div><span>🏍️</span></section>
     <section className="numbers"><Metric title="Aguardando" value={totals.pending} /><Metric title="Em rota" value={totals.moving} /><Metric title="Concluídas" value={totals.done} /></section>
     <label className="search">🔎 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar por cliente, endereço ou código" aria-label="Buscar entregas" /></label>
-    <section className="commands"><div className="tabs">{(['today', 'scheduled', 'all', 'pending', 'in_progress', 'completed'] as const).map(value => <button key={value} className={filter === value ? 'tab active' : 'tab'} onClick={() => setFilter(value)}>{value === 'all' ? 'Todas' : value === 'today' ? 'Hoje' : value === 'scheduled' ? 'Agendadas' : statusName[value]}</button>)}</div><div className="actions">{isAdmin && <button className="ghost" onClick={() => setStoresOpen(true)}>Lojas</button>}{isAdmin && <button className="ghost" onClick={() => setCouriersOpen(true)}>Entregadores</button>}{isAdmin && <button onClick={() => setFormOpen(true)}>Nova entrega</button>}<button className="ghost" onClick={reload}>Atualizar</button></div></section>
+    <section className="commands"><div className="tabs">{(['today', 'scheduled', 'all', 'pending', 'in_progress', 'completed'] as const).map(value => <button key={value} className={filter === value ? 'tab active' : 'tab'} onClick={() => setFilter(value)}>{value === 'all' ? 'Todas' : value === 'today' ? 'Hoje' : value === 'scheduled' ? 'Agendadas' : statusName[value]}</button>)}</div><div className="actions">{isAdmin && <button className={filter === 'unassigned' ? 'tab active' : 'ghost'} onClick={() => setFilter('unassigned')}>Sem entregador{unassignedCount ? ` (${unassignedCount})` : ''}</button>}{isAdmin && <button className="ghost" onClick={() => setStoresOpen(true)}>Lojas</button>}{isAdmin && <button className="ghost" onClick={() => setCouriersOpen(true)}>Entregadores</button>}{isAdmin && <button onClick={() => setFormOpen(true)}>Nova entrega</button>}<button className="ghost" onClick={reload}>Atualizar</button></div></section>
     {formOpen && <DeliveryForm owner={profile.id} stores={stores} couriers={couriers} close={() => setFormOpen(false)} saved={() => { setFormOpen(false); reload() }} showError={setNotice} />}
     {storesOpen && <StoreManager stores={stores} close={() => setStoresOpen(false)} saved={reload} showError={setNotice} />}
     {couriersOpen && <CourierManager couriers={couriers} close={() => setCouriersOpen(false)} saved={reload} showError={setNotice} />}
