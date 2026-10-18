@@ -68,14 +68,19 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   const [storesOpen, setStoresOpen] = useState(false)
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null)
   const [filter, setFilter] = useState<'all' | Status>('all')
+  const [search, setSearch] = useState('')
   const isAdmin = profile.role === 'admin'
-  const shown = filter === 'all' ? deliveries : deliveries.filter(item => item.status === filter)
+  const shown = (filter === 'all' ? deliveries : deliveries.filter(item => item.status === filter)).filter(item => {
+    const term = search.trim().toLocaleLowerCase('pt-BR')
+    return !term || [item.order_code, item.customer_name, item.delivery_address, item.customer_phone ?? ''].some(value => value.toLocaleLowerCase('pt-BR').includes(term))
+  })
   const totals = useMemo(() => ({ pending: deliveries.filter(item => item.status === 'pending').length, moving: deliveries.filter(item => item.status === 'in_progress').length, done: deliveries.filter(item => item.status === 'completed').length }), [deliveries])
   const updateStatus = async (delivery: Delivery) => { if (!supabase) return; const next: Status | null = delivery.status === 'pending' ? 'in_progress' : delivery.status === 'in_progress' ? 'completed' : null; if (!next) return; const { error } = await supabase.from('deliveries').update({ status: next }).eq('id', delivery.id); if (error) { setNotice(`Não foi possível atualizar: ${error.message}`); return }; reload() }
   return <main className="shell"><header><div className="logo">B</div><div className="heading"><span>BAMBUÍ ENTREGADORES</span><h1>{isAdmin ? 'Visão de hoje' : `Olá, ${profile.full_name || 'entregador'}`}</h1></div><button className="ghost" onClick={() => void supabase?.auth.signOut()}>Sair</button></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
     <section className="greeting"><div><b>{isAdmin ? 'Tudo sob controle.' : 'Boa rota!'}</b><p>{isAdmin ? 'Acompanhe os pedidos da cidade em um só lugar.' : 'Veja os pedidos atribuídos a você e avance o status.'}</p></div><span>🏍️</span></section>
     <section className="numbers"><Number title="Aguardando" value={totals.pending} /><Number title="Em rota" value={totals.moving} /><Number title="Concluídas" value={totals.done} /></section>
+    <label className="search">🔎 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar por cliente, endereço ou código" aria-label="Buscar entregas" /></label>
     <section className="commands"><div className="tabs">{(['all', 'pending', 'in_progress', 'completed'] as const).map(value => <button key={value} className={filter === value ? 'tab active' : 'tab'} onClick={() => setFilter(value)}>{value === 'all' ? 'Todas' : statusName[value]}</button>)}</div><div className="actions">{isAdmin && <button className="ghost" onClick={() => setStoresOpen(true)}>Lojas</button>}{isAdmin && <button onClick={() => setFormOpen(true)}>Nova entrega</button>}<button className="ghost" onClick={reload}>Atualizar</button></div></section>
     {formOpen && <DeliveryForm owner={profile.id} stores={stores} couriers={couriers} close={() => setFormOpen(false)} saved={() => { setFormOpen(false); reload() }} showError={setNotice} />}
     {storesOpen && <StoreManager stores={stores} close={() => setStoresOpen(false)} saved={reload} showError={setNotice} />}
