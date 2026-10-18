@@ -59,7 +59,7 @@ function Message({ title, text, signOut }: { title: string; text: string; signOu
 
 function Login({ onNotice, notice }: { onNotice: (value: string) => void; notice: string }) {
   const [sending, setSending] = useState(false)
-  const enter = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!supabase) return; setSending(true); onNotice(''); const values = new FormData(event.currentTarget); const { error } = await supabase.auth.signInWithPassword({ email: String(values.get('email')), password: String(values.get('password')) }); if (error) onNotice('Não foi possível entrar. Confira os dados.'); setSending(false) }
+  const enter = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!supabase) return; setSending(true); onNotice(''); const values = new FormData(event.currentTarget); const { error } = await supabase.auth.signInWithPassword({ email: String(values.get('email')), password: String(values.get('password')) }); if (error) onNotice(`Não foi possível entrar: ${error.message}`); setSending(false) }
   return <main className="login"><section><div className="logo">B</div><span>BAMBUÍ ENTREGADORES</span><h1>Seu dia começa aqui.</h1><p>Entre para acompanhar ou realizar suas entregas.</p><form onSubmit={enter}><label>E-mail<input name="email" type="email" autoComplete="username" required /></label><label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>{notice && <b className="error">{notice}</b>}<button disabled={sending}>{sending ? 'Entrando…' : 'Entrar'}</button></form></section></main>
 }
 
