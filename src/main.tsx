@@ -1,5 +1,7 @@
 
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState, useRef } from 'react'
+import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet'
+import L from 'leaflet'
 import { createClient, type Session } from '@supabase/supabase-js'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
@@ -25,14 +27,36 @@ if (!projectUrl || !publishableKey) {
 
 const supabase = createClient(projectUrl, publishableKey)
 
-const openMaps = (address: string, from?: GeolocationPosition | null) => {
-  const dest = encodeURIComponent(address)
-  if (from) {
-    const origin = `${from.coords.latitude},${from.coords.longitude}`
-    window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}`, '_blank')
-  } else {
-    window.open(`https://www.google.com/maps/search/?api=1&query=${dest}`, '_blank')
-  }
+type LatLng = { lat: number; lng: number }
+type RouteInfo = { distance: number; duration: number; geometry: LatLng[]; steps: string[] }
+
+const geocode = async (address: string): Promise<LatLng | null> => {
+  const q = encodeURIComponent(address + ', Brasil')
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${q}&limit=1`, {
+    headers: { 'Accept': 'application/json' }
+  })
+  if (!res.ok) return null
+  const data = await res.json()
+  if (!data?.[0]) return null
+  return { lat: Number(data[0].lat), lng: Number(data[0].lon) }
+}
+
+const fetchRoute = async (from: LatLng, to: LatLng): Promise<RouteInfo | null> => {
+  const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=true`
+  const res = await fetch(url)
+  if (!res.ok) return null
+  const data = await res.json()
+  const route = data?.routes?.[0]
+  if (!route) return null
+  const geometry = (route.geometry?.coordinates ?? []).map((c: number[]) => ({ lat: c[1], lng: c[0] }))
+  const steps = (route.legs?.[0]?.steps ?? []).map((s: { maneuver?: { instruction?: string } }) => s.maneuver?.instruction || 'Siga em frente')
+  return { distance: route.distance, duration: route.duration, geometry, steps }
+}
+
+const formatDistance = (m: number) => m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`
+const formatDuration = (s: number) => {
+  const min = Math.round(s / 60)
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`
 }
 
 const requestLocation = (): Promise<GeolocationPosition | null> =>
@@ -287,7 +311,53 @@ function StoreHome({ profile, deliveries, reload, notice, setNotice }: {
   setNotice: (value: string) => void
 }) {
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [online, setOnline] = useState(false)
+  const [onlineSync, setOnlineSync] = useState<'idle' | 'saving' | 'error'>('idle')
   const waiting = deliveries.filter(item => item.status === 'pending' && item.accepted_at)
+
+  useEffect(() => {
+    setOnline(Boolean(profile.is_online))
+  }, [profile.is_online])
+
+  const toggleOnline = async () => {
+    const next = !online
+    setOnlineSync('saving')
+    const { error } = await supabase.from('profiles').update({ is_online: next }).eq('id', profile.id)
+    if (error) {
+      setOnlineSync('error')
+      setNotice(`Não foi possível atualizar disponibilidade: ${error.message}`)
+      return
+    }
+    setOnline(next)
+    setOnlineSync('idle')
+    reload()
+  }
+
+  useEffect(() => {
+    const active = deliveries.find(d => d.courier_id === profile.id && d.status === 'in_progress')
+    if (!active || !online) return
+    if (!navigator.geolocation) return
+    let lastSent = 0
+    const watchId = navigator.geolocation.watchPosition(
+      async pos => {
+        const now = Date.now()
+        if (now - lastSent < 20000) return
+        lastSent = now
+        const { error } = await supabase.from('courier_locations').upsert({
+          courier_id: profile.id,
+          delivery_id: active.id,
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          updated_at: new Date().toISOString()
+        })
+        if (error) setNotice(`Falha ao enviar localização: ${error.message}`)
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 15000, timeout: 15000 }
+    )
+    return () => navigator.geolocation.clearWatch(watchId)
+  }, [deliveries, online, profile.id])
 
   const confirmPickup = async (delivery: Delivery) => {
     const typedCode = window.prompt(`Informe o código de coleta do pedido ${delivery.order_code}.`)?.trim()
@@ -317,6 +387,13 @@ function StoreHome({ profile, deliveries, reload, notice, setNotice }: {
         </div>
         <button className="ghost" onClick={() => void supabase.auth.signOut()}>Sair</button>
       </header>
+
+      <div className={`status-bar ${online ? 'online' : 'offline'}`}>
+        <span><span className="dot" />{online ? 'Disponível para entregas' : 'Offline'}</span>
+        <button className={online ? 'ghost' : ''} onClick={() => void toggleOnline()}>
+          {onlineSync === 'saving' ? 'Salvando…' : online ? 'Ficar offline' : 'Ficar online'}
+        </button>
+      </div>
 
       {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
 
@@ -667,6 +744,103 @@ function DeliveryTimeline({ item }: { item: Delivery }) {
   )
 }
 
+
+function CenterOn({ position }: { position: LatLng }) {
+  const map = useMap()
+  useEffect(() => { map.setView([position.lat, position.lng], map.getZoom()) }, [position, map])
+  return null
+}
+
+function Navigation({ destination, onClose }: { destination: string; onClose: () => void }) {
+  const [me, setMe] = useState<LatLng | null>(null)
+  const [dest, setDest] = useState<LatLng | null>(null)
+  const [route, setRoute] = useState<RouteInfo | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const watchRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const start = async () => {
+      setLoading(true)
+      setError('')
+      const destPos = await geocode(destination)
+      if (cancelled) return
+      if (!destPos) {
+        setError('Não foi possível localizar o endereço de destino.')
+        setLoading(false)
+        return
+      }
+      setDest(destPos)
+      if (!navigator.geolocation) {
+        setError('Geolocalização não suportada.')
+        setLoading(false)
+        return
+      }
+      watchRef.current = navigator.geolocation.watchPosition(
+        async pos => {
+          const current = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+          setMe(current)
+          const r = await fetchRoute(current, destPos)
+          if (!cancelled) {
+            setRoute(r)
+            if (!r) setError('Serviço de rotas indisponível. O mapa mostra apenas a posição.')
+            setLoading(false)
+          }
+        },
+        err => {
+          if (!cancelled) {
+            setError(err.message || 'Permissão de localização negada.')
+            setLoading(false)
+          }
+        },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      )
+    }
+    void start()
+    return () => {
+      cancelled = true
+      if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current)
+    }
+  }, [destination])
+
+  const center = me ?? dest ?? { lat: -20.0, lng: -45.97 }
+
+  return (
+    <div className="nav-overlay">
+      <header className="nav-header">
+        <button className="ghost" onClick={onClose}>Fechar</button>
+        <div>
+          <b>Navegação</b>
+          <small>{destination}</small>
+        </div>
+      </header>
+      <div className="nav-map">
+        <MapContainer center={[center.lat, center.lng]} zoom={15} style={{ height: '100%', width: '100%' }}>
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap' />
+          {me && <Marker position={[me.lat, me.lng]} icon={L.divIcon({ className: 'me-marker', html: '📍', iconSize: [24, 24] })} />}
+          {dest && <Marker position={[dest.lat, dest.lng]} icon={L.divIcon({ className: 'dest-marker', html: '🏁', iconSize: [24, 24] })} />}
+          {route && route.geometry.length > 1 && <Polyline positions={route.geometry.map(p => [p.lat, p.lng])} color="#e52335" weight={5} />}
+          {me && <CenterOn position={me} />}
+        </MapContainer>
+      </div>
+      <footer className="nav-footer">
+        {loading && <p>Carregando rota…</p>}
+        {error && <p className="error">{error}</p>}
+        {route && (
+          <>
+            <div className="nav-stats">
+              <span>{formatDistance(route.distance)}</span>
+              <span>{formatDuration(route.duration)}</span>
+            </div>
+            {route.steps[0] && <p className="nav-step">{route.steps[0]}</p>}
+          </>
+        )}
+      </footer>
+    </div>
+  )
+}
+
 function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact, help }: {
   item: Delivery
   store?: Store
@@ -678,6 +852,8 @@ function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact, h
   contact: () => void
   help: () => void
 }) {
+  const [navAddress, setNavAddress] = useState<string | null>(null)
+
   const canAdvance = item.status === 'in_progress' || (item.status === 'pending' && !item.accepted_at)
   const actionLabel = item.status === 'pending' ? 'Aceitar entrega' : 'Concluir'
   const routeToStore = item.status === 'pending' && Boolean(store?.address)
@@ -707,13 +883,14 @@ function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact, h
       <footer>
         <button className="ghost" onClick={contact}>Contato</button>
         {!isAdmin && item.status !== 'completed' && item.status !== 'cancelled' && <button className="ghost" onClick={help}>Preciso de ajuda</button>}
-        <button className="ghost" onClick={() => openMaps(routeAddress)}>
-          {routeToStore ? 'Rota para loja' : 'Rota para cliente'}
+        <button className="ghost" onClick={() => setNavAddress(routeAddress)}>
+          {routeToStore ? 'Navegar para loja' : 'Navegar para cliente'}
         </button>
         {isAdmin && <button className="ghost" onClick={edit}>Editar</button>}
         {item.status === 'in_progress' && !item.arrived_at && <button className="ghost" onClick={arrive}>Cheguei ao local</button>}
         {canAdvance && <button onClick={advance}>{actionLabel}</button>}
       </footer>
+      {navAddress && <Navigation destination={navAddress} onClose={() => setNavAddress(null)} />}
     </article>
   )
 }
