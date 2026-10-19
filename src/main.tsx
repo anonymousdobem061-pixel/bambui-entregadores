@@ -35,13 +35,74 @@ function App() {
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
 
+
   const load = async (userId: string) => {
- 
-if (!current.active) {
-  setNotice('Seu perfil está inativo.')
-  setLoading(false)
-  return
-}
+    const { data: current, error: profileError } = await supabase
+      .from('profiles')
+      .select('id,full_name,role,active,store_id')
+      .eq('id', userId)
+      .single()
+
+    if (profileError || !current) {
+      setProfile(null)
+      setNotice(
+        profileError
+          ? `Não foi possível carregar o perfil: ${profileError.message}`
+          : 'Perfil não encontrado.'
+      )
+      setLoading(false)
+      return
+    }
+
+    setProfile(current as Profile)
+
+    if (!current.active) {
+      setNotice('Seu perfil está inativo.')
+      setLoading(false)
+      return
+    }
+
+    const [deliveryData, storeData, courierData] = await Promise.all([
+      supabase
+        .from('deliveries')
+        .select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,pickup_code,confirmation_code,customer_access_token,accepted_at,collected_at,arrived_at,completed_at,priority,status,store_id,courier_id,scheduled_for,created_at')
+        .order('created_at', { ascending: false }),
+
+      supabase
+        .from('stores')
+        .select('id,name,address,phone')
+        .order('name'),
+
+      current.role === 'admin'
+        ? supabase
+            .from('profiles')
+            .select('id,full_name,role,active,store_id')
+            .eq('role', 'courier')
+            .order('full_name')
+        : Promise.resolve({ data: [], error: null })
+    ])
+
+    if (deliveryData.error) {
+      setNotice(`Não foi possível carregar as entregas: ${deliveryData.error.message}`)
+    } else {
+      setDeliveries((deliveryData.data ?? []) as Delivery[])
+    }
+
+    if (storeData.error) {
+      setNotice(`Não foi possível carregar as lojas: ${storeData.error.message}`)
+    } else {
+      setStores((storeData.data ?? []) as Store[])
+    }
+
+    if (courierData.error) {
+      setNotice(`Não foi possível carregar os entregadores: ${courierData.error.message}`)
+    } else {
+      setCouriers((courierData.data ?? []) as Profile[])
+    }
+
+    setLoading(false)
+  }
+
 
 const [deliveryData, courierData] = await Promise.all([
   supabase
