@@ -44,8 +44,7 @@ function App() {
     setProfile(current)
     if (!current.active) { setNotice('Seu perfil está inativo.'); setLoading(false); return }
     const [deliveryData, storeData, courierData] = await Promise.all([
-      supabase.from('deliveries').select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,pickup_code,confirmation_code,accepted_at,collected_at,arrived_at,completed_at,priority,status,store_id,courier_id,scheduled_for,created_at').order('created_at', { ascending: false }),
-      supabase.from('stores').select('id,name,address,phone').eq('active', true).order('name'),
+     supabase.from('deliveries').select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,pickup_code,confirmation_code,customer_access_token,accepted_at,collected_at,arrived_at,completed_at,priority,status,store_id,courier_id,scheduled_for,created_at').order('created_at', { ascending: false }),
       current.role === 'admin' ? supabase.from('profiles').select('id,full_name,role,active,store_id').eq('role', 'courier').order('full_name') : Promise.resolve({ data: [], error: null })
     ])
     if (deliveryData.error) setNotice(`Não foi possível carregar as entregas: ${deliveryData.error.message}`)
