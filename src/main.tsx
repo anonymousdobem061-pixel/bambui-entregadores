@@ -149,6 +149,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
     {couriersOpen && <CourierManager couriers={couriers} close={() => setCouriersOpen(false)} saved={reload} showError={setNotice} />}
     {editingDelivery && <DeliveryEditor item={editingDelivery} stores={stores} couriers={couriers} close={() => setEditingDelivery(null)} saved={() => { setEditingDelivery(null); reload() }} showError={setNotice} />}
     {contactDelivery && <ContactPanel item={contactDelivery} viewerId={profile.id} close={() => setContactDelivery(null)} showError={setNotice} />}
+    {contactDelivery && <CustomerChatPanel item={contactDelivery} viewerId={profile.id} close={() => setContactDelivery(null)} showError={setNotice} />}
     {problemDelivery && <ProblemPanel item={problemDelivery} authorId={profile.id} close={() => setProblemDelivery(null)} saved={() => { setProblemDelivery(null); setNotice('Pedido de ajuda enviado para a equipe.') }} showError={setNotice} />}
     <section className="deliveries">{shown.length === 0 ? <div className="empty">Nenhuma entrega nesta lista.</div> : shown.map(delivery => <Card key={delivery.id} item={delivery} store={stores.find(store => store.id === delivery.store_id)} courier={couriers.find(courier => courier.id === delivery.courier_id)} isAdmin={isAdmin} advance={() => void updateStatus(delivery)} arrive={() => void markArrived(delivery)} edit={() => setEditingDelivery(delivery)} contact={() => setContactDelivery(delivery)} help={() => setProblemDelivery(delivery)} />)}</section>
   </main>
