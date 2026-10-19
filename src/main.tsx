@@ -25,6 +25,26 @@ if (!projectUrl || !publishableKey) {
 
 const supabase = createClient(projectUrl, publishableKey)
 
+const openMaps = (address: string, from?: GeolocationPosition | null) => {
+  const dest = encodeURIComponent(address)
+  if (from) {
+    const origin = `${from.coords.latitude},${from.coords.longitude}`
+    window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}`, '_blank')
+  } else {
+    window.open(`https://www.google.com/maps/search/?api=1&query=${dest}`, '_blank')
+  }
+}
+
+const requestLocation = (): Promise<GeolocationPosition | null> =>
+  new Promise(resolve => {
+    if (!navigator.geolocation) return resolve(null)
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve(pos),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
+    )
+  })
+
 const statusName: Record<Status, string> = {
   pending: 'Aguardando',
   in_progress: 'Em rota',
@@ -345,6 +365,30 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   setNotice: (value: string) => void
 }) {
   const [formOpen, setFormOpen] = useState(false)
+  const [online, setOnline] = useState(() => localStorage.getItem('bambui-online') === '1')
+  const [myLocation, setMyLocation] = useState<GeolocationPosition | null>(null)
+  const [gpsError, setGpsError] = useState('')
+
+  useEffect(() => {
+    localStorage.setItem('bambui-online', online ? '1' : '0')
+  }, [online])
+
+  useEffect(() => {
+    const channel = supabase.channel('deliveries-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries' }, () => reload())
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [reload])
+
+  const refreshLocation = async () => {
+    setGpsError('')
+    const pos = await requestLocation()
+    if (!pos) {
+      setGpsError('Localização indisponível ou permissão negada.')
+      return
+    }
+    setMyLocation(pos)
+  }
   const [storesOpen, setStoresOpen] = useState(false)
   const [couriersOpen, setCouriersOpen] = useState(false)
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null)
@@ -449,6 +493,15 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
         <button className="ghost" onClick={() => void supabase.auth.signOut()}>Sair</button>
       </header>
 
+      {!isAdmin && (
+        <div className={`status-bar ${online ? 'online' : 'offline'}`}>
+          <span><span className="dot" />{online ? 'Disponível para entregas' : 'Offline'}</span>
+          <button className={online ? 'ghost' : ''} onClick={() => setOnline(v => !v)}>
+            {online ? 'Ficar offline' : 'Ficar online'}
+          </button>
+        </div>
+      )}
+
       {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
 
       <section className="greeting">
@@ -458,6 +511,14 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
         </div>
         <span>🏍️</span>
       </section>
+
+      {!isAdmin && (
+        <div className="gps-status">
+          <button className="ghost" onClick={() => void refreshLocation()}>Atualizar minha localização</button>
+          {myLocation && <span> · GPS ativo ({myLocation.coords.accuracy.toFixed(0)} m)</span>}
+          {gpsError && <span> · {gpsError}</span>}
+        </div>
+      )}
 
       <section className="numbers">
         <Metric title="Aguardando" value={totals.pending} />
@@ -579,9 +640,9 @@ function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact, h
       <footer>
         <button className="ghost" onClick={contact}>Contato</button>
         {!isAdmin && item.status !== 'completed' && item.status !== 'cancelled' && <button className="ghost" onClick={help}>Preciso de ajuda</button>}
-        <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(routeAddress)}`} target="_blank" rel="noreferrer">
+        <button className="ghost" onClick={() => openMaps(routeAddress)}>
           {routeToStore ? 'Rota para loja' : 'Rota para cliente'}
-        </a>
+        </button>
         {isAdmin && <button className="ghost" onClick={edit}>Editar</button>}
         {item.status === 'in_progress' && !item.arrived_at && <button className="ghost" onClick={arrive}>Cheguei ao local</button>}
         {canAdvance && <button onClick={advance}>{actionLabel}</button>}
