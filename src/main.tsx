@@ -309,6 +309,32 @@ function StoreHome({ profile, deliveries, reload, notice, setNotice }: {
     reload()
   }
 
+  useEffect(() => {
+    const active = deliveries.find(d => d.courier_id === profile.id && d.status === 'in_progress')
+    if (!active || !online) return
+    if (!navigator.geolocation) return
+    let lastSent = 0
+    const watchId = navigator.geolocation.watchPosition(
+      async pos => {
+        const now = Date.now()
+        if (now - lastSent < 20000) return
+        lastSent = now
+        const { error } = await supabase.from('courier_locations').upsert({
+          courier_id: profile.id,
+          delivery_id: active.id,
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          updated_at: new Date().toISOString()
+        })
+        if (error) setNotice(`Falha ao enviar localização: ${error.message}`)
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 15000, timeout: 15000 }
+    )
+    return () => navigator.geolocation.clearWatch(watchId)
+  }, [deliveries, online, profile.id])
+
   const confirmPickup = async (delivery: Delivery) => {
     const typedCode = window.prompt(`Informe o código de coleta do pedido ${delivery.order_code}.`)?.trim()
     if (!typedCode) return
