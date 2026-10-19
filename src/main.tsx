@@ -6,7 +6,7 @@ import './styles.css'
 
 type Status = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type Priority = 'normal' | 'high'
-type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; active: boolean; store_id: string | null }
+type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; active: boolean; store_id: string | null; is_online?: boolean }
 type Store = { id: string; name: string; address: string | null; phone: string | null }
 type Delivery = { id: string; order_code: string; customer_name: string; customer_phone: string | null; delivery_address: string; notes: string; cancellation_reason: string | null; pickup_code: string | null; confirmation_code: string | null; customer_access_token: string | null; accepted_at: string | null; collected_at: string | null; arrived_at: string | null; completed_at: string | null; priority: Priority; status: Status; store_id: string | null; courier_id: string | null; scheduled_for: string | null; created_at: string }
 type CustomerDelivery = { order_code: string; customer_name: string; status: Status; confirmation_code: string | null }
@@ -100,7 +100,7 @@ function App() {
   const load = async (userId: string) => {
     const { data: current, error: profileError } = await supabase
       .from('profiles')
-      .select('id,full_name,role,active,store_id')
+      .select('id,full_name,role,active,store_id,is_online')
       .eq('id', userId)
       .single()
 
@@ -137,7 +137,7 @@ function App() {
       current.role === 'admin'
         ? supabase
             .from('profiles')
-            .select('id,full_name,role,active,store_id')
+            .select('id,full_name,role,active,store_id,is_online')
             .eq('role', 'courier')
             .order('full_name')
         : Promise.resolve({ data: [], error: null })
@@ -365,13 +365,29 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   setNotice: (value: string) => void
 }) {
   const [formOpen, setFormOpen] = useState(false)
-  const [online, setOnline] = useState(() => localStorage.getItem('bambui-online') === '1')
+  const [online, setOnline] = useState(false)
+  const [onlineSync, setOnlineSync] = useState<'idle' | 'saving' | 'error'>('idle')
   const [myLocation, setMyLocation] = useState<GeolocationPosition | null>(null)
   const [gpsError, setGpsError] = useState('')
+  const [tracking, setTracking] = useState(false)
 
   useEffect(() => {
-    localStorage.setItem('bambui-online', online ? '1' : '0')
-  }, [online])
+    setOnline(Boolean(profile.is_online))
+  }, [profile.is_online])
+
+  const toggleOnline = async () => {
+    const next = !online
+    setOnlineSync('saving')
+    const { error } = await supabase.from('profiles').update({ is_online: next }).eq('id', profile.id)
+    if (error) {
+      setOnlineSync('error')
+      setNotice(`Não foi possível atualizar disponibilidade: ${error.message}. Estado continua ${online ? 'online' : 'offline'}.`)
+      return
+    }
+    setOnline(next)
+    setOnlineSync('idle')
+    reload()
+  }
 
   useEffect(() => {
     const channel = supabase.channel('deliveries-changes')
@@ -379,6 +395,44 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
       .subscribe()
     return () => { void supabase.removeChannel(channel) }
   }, [reload])
+
+  useEffect(() => {
+    const active = deliveries.find(d => d.courier_id === profile.id && d.status === 'in_progress')
+    if (!active || !online) {
+      setTracking(false)
+      return
+    }
+    if (!navigator.geolocation) {
+      setGpsError('Geolocalização não suportada neste dispositivo.')
+      return
+    }
+    setTracking(true)
+    let lastSent = 0
+    const watchId = navigator.geolocation.watchPosition(
+      async pos => {
+        setMyLocation(pos)
+        const now = Date.now()
+        if (now - lastSent < 20000) return
+        lastSent = now
+        const { error } = await supabase.from('courier_locations').upsert({
+          courier_id: profile.id,
+          delivery_id: active.id,
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          updated_at: new Date().toISOString()
+        })
+        if (error) setGpsError(`Falha ao enviar localização: ${error.message}`)
+        else setGpsError('')
+      },
+      err => setGpsError(err.message || 'Permissão de localização negada ou GPS indisponível.'),
+      { enableHighAccuracy: true, maximumAge: 15000, timeout: 15000 }
+    )
+    return () => {
+      navigator.geolocation.clearWatch(watchId)
+      setTracking(false)
+    }
+  }, [deliveries, online, profile.id])
 
   const refreshLocation = async () => {
     setGpsError('')
@@ -496,8 +550,8 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
       {!isAdmin && (
         <div className={`status-bar ${online ? 'online' : 'offline'}`}>
           <span><span className="dot" />{online ? 'Disponível para entregas' : 'Offline'}</span>
-          <button className={online ? 'ghost' : ''} onClick={() => setOnline(v => !v)}>
-            {online ? 'Ficar offline' : 'Ficar online'}
+          <button className={online ? 'ghost' : ''} onClick={() => void toggleOnline()}>
+            {onlineSync === 'saving' ? 'Salvando…' : online ? 'Ficar offline' : 'Ficar online'}
           </button>
         </div>
       )}
@@ -515,7 +569,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
       {!isAdmin && (
         <div className="gps-status">
           <button className="ghost" onClick={() => void refreshLocation()}>Atualizar minha localização</button>
-          {myLocation && <span> · GPS ativo ({myLocation.coords.accuracy.toFixed(0)} m)</span>}
+          {tracking && <span> · Rastreando entrega ativa</span>}{myLocation && <span> · precisão {myLocation.coords.accuracy.toFixed(0)} m</span>}
           {gpsError && <span> · {gpsError}</span>}
         </div>
       )}
