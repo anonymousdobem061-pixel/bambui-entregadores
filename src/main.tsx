@@ -5,9 +5,9 @@ import './styles.css'
 
 type Status = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type Priority = 'normal' | 'high'
-type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; active: boolean }
+type Profile = { id: string; full_name: string; role: 'admin' | 'courier'; active: boolean; store_id: string | null }
 type Store = { id: string; name: string; address: string | null; phone: string | null }
-type Delivery = { id: string; order_code: string; customer_name: string; customer_phone: string | null; delivery_address: string; notes: string; cancellation_reason: string | null; confirmation_code: string | null; customer_access_token: string | null; accepted_at: string | null; collected_at: string | null; arrived_at: string | null; completed_at: string | null; priority: Priority; status: Status; store_id: string | null; courier_id: string | null; scheduled_for: string | null; created_at: string }
+type Delivery = { id: string; order_code: string; customer_name: string; customer_phone: string | null; delivery_address: string; notes: string; cancellation_reason: string | null; pickup_code: string | null; confirmation_code: string | null; customer_access_token: string | null; accepted_at: string | null; collected_at: string | null; arrived_at: string | null; completed_at: string | null; priority: Priority; status: Status; store_id: string | null; courier_id: string | null; scheduled_for: string | null; created_at: string }
 type CustomerDelivery = { order_code: string; customer_name: string; status: Status; confirmation_code: string | null }
 type DeliveryMessage = { id: string; author_id: string; body: string; created_at: string }
 type DeliveryView = 'all' | 'today' | 'scheduled' | 'unassigned' | 'overdue' | Status
@@ -38,15 +38,15 @@ function App() {
   const load = async (userId: string) => {
     if (!supabase) return
     setLoading(true)
-    const me = await supabase.from('profiles').select('id,full_name,role,active').eq('id', userId).maybeSingle()
+    const me = await supabase.from('profiles').select('id,full_name,role,active,store_id').eq('id', userId).maybeSingle()
     if (me.error || !me.data) { setNotice('Seu usuário ainda não possui perfil no aplicativo.'); setLoading(false); return }
     const current = me.data as Profile
     setProfile(current)
     if (!current.active) { setNotice('Seu perfil está inativo.'); setLoading(false); return }
     const [deliveryData, storeData, courierData] = await Promise.all([
-      supabase.from('deliveries').select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,confirmation_code,accepted_at,collected_at,arrived_at,completed_at,priority,status,store_id,courier_id,scheduled_for,created_at').order('created_at', { ascending: false }),
+      supabase.from('deliveries').select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,pickup_code,confirmation_code,accepted_at,collected_at,arrived_at,completed_at,priority,status,store_id,courier_id,scheduled_for,created_at').order('created_at', { ascending: false }),
       supabase.from('stores').select('id,name,address,phone').eq('active', true).order('name'),
-      current.role === 'admin' ? supabase.from('profiles').select('id,full_name,role,active').eq('role', 'courier').order('full_name') : Promise.resolve({ data: [], error: null })
+      current.role === 'admin' ? supabase.from('profiles').select('id,full_name,role,active,store_id').eq('role', 'courier').order('full_name') : Promise.resolve({ data: [], error: null })
     ])
     if (deliveryData.error) setNotice(`Não foi possível carregar as entregas: ${deliveryData.error.message}`)
     else setDeliveries((deliveryData.data ?? []) as Delivery[])
@@ -66,6 +66,7 @@ function App() {
   if (!session) return <Login onNotice={setNotice} notice={notice} />
   if (loading) return <Message title="Bambuí Entregadores" text="Carregando…" />
   if (!profile?.active) return <Message title="Acesso indisponível" text={notice || 'Perfil não encontrado.'} signOut />
+  if (profile.store_id) return <StoreHome profile={profile} deliveries={deliveries} reload={() => void load(session.user.id)} notice={notice} setNotice={setNotice} />
   return <Home profile={profile} deliveries={deliveries} stores={stores} couriers={couriers} reload={() => void load(session.user.id)} notice={notice} setNotice={setNotice} />
 }
 
@@ -84,6 +85,21 @@ function Login({ onNotice, notice }: { onNotice: (value: string) => void; notice
   const [sending, setSending] = useState(false)
   const enter = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!supabase) return; setSending(true); onNotice(''); const values = new FormData(event.currentTarget); const { error } = await supabase.auth.signInWithPassword({ email: String(values.get('email')), password: String(values.get('password')) }); if (error) onNotice(`Não foi possível entrar: ${error.message}`); setSending(false) }
   return <main className="login"><section><div className="logo">B</div><span>BAMBUÍ ENTREGADORES</span><h1>Seu dia começa aqui.</h1><p>Entre para acompanhar ou realizar suas entregas.</p><form onSubmit={enter}><label>E-mail<input name="email" type="email" autoComplete="username" required /></label><label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>{notice && <b className="error">{notice}</b>}<button disabled={sending}>{sending ? 'Entrando…' : 'Entrar'}</button></form></section></main>
+}
+
+function StoreHome({ profile, deliveries, reload, notice, setNotice }: { profile: Profile; deliveries: Delivery[]; reload: () => void; notice: string; setNotice: (value: string) => void }) {
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const waiting = deliveries.filter(item => item.status === 'pending' && item.accepted_at)
+  const confirmPickup = async (delivery: Delivery) => {
+    const typedCode = window.prompt(`Informe o código de coleta do pedido ${delivery.order_code}.`)?.trim()
+    if (!typedCode) return
+    setConfirmingId(delivery.id)
+    const { error } = await supabase.rpc('confirm_store_pickup', { p_delivery_id: delivery.id, p_pickup_code: typedCode })
+    setConfirmingId(null)
+    if (error) { setNotice(`Não foi possível confirmar a coleta: ${error.message}`); return }
+    reload()
+  }
+  return <main className="shell"><header><div className="logo">B</div><div className="heading"><span>BAMBUÍ ENTREGADORES</span><h1>Coletas da loja</h1></div><button className="ghost" onClick={() => void supabase.auth.signOut()}>Sair</button></header>{notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}<section className="greeting"><div><b>Pedidos aguardando coleta</b><p>Confirme o código informado pela pessoa entregadora antes de liberar o pedido.</p></div><span>🏪</span></section><section className="deliveries">{waiting.length === 0 ? <div className="empty">Nenhum pedido aguardando coleta.</div> : waiting.map(item => <article className="card" key={item.id}><div className="card-head"><span className="pill pending">Aguardando coleta</span><small>{item.order_code}</small></div><h2>{item.customer_name}</h2><p>📍 {item.delivery_address}</p><p className="notes">Código esperado: <b>{item.pickup_code ?? 'Não informado'}</b></p><footer><button disabled={confirmingId === item.id || !item.pickup_code} onClick={() => void confirmPickup(item)}>{confirmingId === item.id ? 'Confirmando…' : 'Confirmar coleta'}</button></footer></article>)}</section></main>
 }
 
 function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice }: { profile: Profile; deliveries: Delivery[]; stores: Store[]; couriers: Profile[]; reload: () => void; notice: string; setNotice: (value: string) => void }) {
@@ -110,14 +126,14 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
   const updateStatus = async (delivery: Delivery) => {
     if (!supabase) return
     if (delivery.status === 'pending' && !delivery.accepted_at) { const { error } = await supabase.from('deliveries').update({ accepted_at: new Date().toISOString() }).eq('id', delivery.id); if (error) { setNotice(`Não foi possível aceitar: ${error.message}`); return }; reload(); return }
-    const next: Status | null = delivery.status === 'pending' ? 'in_progress' : delivery.status === 'in_progress' ? 'completed' : null
+    if (delivery.status === 'pending') { setNotice('Aguarde a loja confirmar a coleta para iniciar a rota.'); return }
+    const next: Status | null = delivery.status === 'in_progress' ? 'completed' : null
     if (!next) return
     if (next === 'completed' && delivery.confirmation_code) {
       const typedCode = window.prompt('Peça ao cliente o código de confirmação de 4 dígitos.')?.trim()
       if (typedCode !== delivery.confirmation_code) { setNotice('Código de confirmação incorreto. A entrega continua em rota.'); return }
     }
-    const update = delivery.status === 'pending' && !delivery.accepted_at ? { accepted_at: new Date().toISOString() } : { status: next, collected_at: next === 'in_progress' ? new Date().toISOString() : null, completed_at: next === 'completed' ? new Date().toISOString() : null }
-    const { error } = await supabase.from('deliveries').update(update).eq('id', delivery.id)
+    const { error } = await supabase.from('deliveries').update({ status: next, completed_at: new Date().toISOString() }).eq('id', delivery.id)
     if (error) { setNotice(`Não foi possível atualizar: ${error.message}`); return }
     reload()
   }
@@ -139,7 +155,7 @@ function Home({ profile, deliveries, stores, couriers, reload, notice, setNotice
 
 function Metric({ title, value }: { title: string; value: number }) { return <article className="number"><small>{title}</small><strong>{value}</strong></article> }
 function DeliveryTimeline({ item }: { item: Delivery }) { const steps = [{ label: 'Aceita', done: Boolean(item.accepted_at) }, { label: 'Coletada', done: Boolean(item.collected_at) }, { label: 'Em rota', done: item.status === 'in_progress' || item.status === 'completed' }, { label: 'Chegou', done: Boolean(item.arrived_at) }, { label: 'Entregue', done: item.status === 'completed' }]; return <p className="notes">{steps.map(step => <span key={step.label}>{step.done ? '●' : '○'} {step.label} </span>)}</p> }
-function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact }: { item: Delivery; store?: Store; courier?: Profile; isAdmin: boolean; advance: () => void; arrive: () => void; edit: () => void; contact: () => void }) { const canAdvance = item.status === 'pending' || item.status === 'in_progress'; const actionLabel = item.status === 'pending' ? item.accepted_at ? 'Confirmar coleta' : 'Aceitar entrega' : 'Concluir'; return <article className="card"><div className="card-head"><span className={`pill ${item.status}`}>{item.status === 'pending' && item.accepted_at ? 'A caminho da loja' : statusName[item.status]}</span><small>{item.order_code}</small></div><h2>{item.customer_name}</h2><DeliveryTimeline item={item} />{item.priority === 'high' && <p className="priority">⚡ {priorityName[item.priority]}</p>}{isOverdue(item) && <p className="cancel-reason">⚠ Entrega atrasada</p>}<p>📍 {item.delivery_address}</p>{store && <p>🏪 {store.name}</p>}{item.collected_at && <p className="notes">📦 Coletado: {scheduleValue(item.collected_at)}</p>}{item.arrived_at && <p className="notes">📍 Chegou: {scheduleValue(item.arrived_at)}</p>}{item.completed_at && <p className="notes">✅ Entregue: {scheduleValue(item.completed_at)}</p>}{item.scheduled_for && <p>🗓️ Agendada: {scheduleValue(item.scheduled_for)}</p>}{isAdmin && <p>🛵 {courier?.full_name || 'Sem entregador'}</p>}{item.notes && <p className="notes">{item.notes}</p>}{item.status === 'cancelled' && item.cancellation_reason && <p className="cancel-reason">Cancelamento: {item.cancellation_reason}</p>}<footer><button className="ghost" onClick={contact}>Contato</button><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.delivery_address)}`} target="_blank" rel="noreferrer">Abrir rota</a>{isAdmin && <button className="ghost" onClick={edit}>Editar</button>}{item.status === 'in_progress' && !item.arrived_at && <button className="ghost" onClick={arrive}>Cheguei ao local</button>}{canAdvance && <button onClick={advance}>{actionLabel}</button>}</footer></article> }
+function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact }: { item: Delivery; store?: Store; courier?: Profile; isAdmin: boolean; advance: () => void; arrive: () => void; edit: () => void; contact: () => void }) { const canAdvance = item.status === 'in_progress' || (item.status === 'pending' && !item.accepted_at); const actionLabel = item.status === 'pending' ? 'Aceitar entrega' : 'Concluir'; return <article className="card"><div className="card-head"><span className={`pill ${item.status}`}>{item.status === 'pending' && item.accepted_at ? 'Aguardando coleta da loja' : statusName[item.status]}</span><small>{item.order_code}</small></div><h2>{item.customer_name}</h2><DeliveryTimeline item={item} />{item.priority === 'high' && <p className="priority">⚡ {priorityName[item.priority]}</p>}{isOverdue(item) && <p className="cancel-reason">⚠ Entrega atrasada</p>}<p>📍 {item.delivery_address}</p>{store && <p>🏪 {store.name}</p>}{!isAdmin && item.status === 'pending' && item.accepted_at && item.pickup_code && <p className="notes">🔐 Informe à loja o código de coleta: <b>{item.pickup_code}</b></p>}{item.collected_at && <p className="notes">📦 Coletado: {scheduleValue(item.collected_at)}</p>}{item.arrived_at && <p className="notes">📍 Chegou: {scheduleValue(item.arrived_at)}</p>}{item.completed_at && <p className="notes">✅ Entregue: {scheduleValue(item.completed_at)}</p>}{item.scheduled_for && <p>🗓️ Agendada: {scheduleValue(item.scheduled_for)}</p>}{isAdmin && <p>🛵 {courier?.full_name || 'Sem entregador'}</p>}{item.notes && <p className="notes">{item.notes}</p>}{item.status === 'cancelled' && item.cancellation_reason && <p className="cancel-reason">Cancelamento: {item.cancellation_reason}</p>}<footer><button className="ghost" onClick={contact}>Contato</button><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.delivery_address)}`} target="_blank" rel="noreferrer">Abrir rota</a>{isAdmin && <button className="ghost" onClick={edit}>Editar</button>}{item.status === 'in_progress' && !item.arrived_at && <button className="ghost" onClick={arrive}>Cheguei ao local</button>}{canAdvance && <button onClick={advance}>{actionLabel}</button>}</footer></article> }
 
 function ContactPanel({ item, viewerId, close, showError }: { item: Delivery; viewerId: string; close: () => void; showError: (value: string) => void }) {
   const [messages, setMessages] = useState<DeliveryMessage[]>([])
@@ -172,7 +188,7 @@ function ContactPanel({ item, viewerId, close, showError }: { item: Delivery; vi
 
 function DeliveryForm({ owner, stores, couriers, close, saved, showError }: { owner: string; stores: Store[]; couriers: Profile[]; close: () => void; saved: () => void; showError: (value: string) => void }) {
   const [saving, setSaving] = useState(false)
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!supabase) return; setSaving(true); const values = new FormData(event.currentTarget); const confirmationCode = String(Math.floor(1000 + Math.random() * 9000)); const orderCode = String(values.get('orderCode') || '').trim().toUpperCase() || `BAM-${Date.now()}`; const { error } = await supabase.from('deliveries').insert({ order_code: orderCode, customer_name: String(values.get('customer')), customer_phone: String(values.get('phone') || '') || null, delivery_address: String(values.get('address')), scheduled_for: scheduleForDatabase(values.get('scheduledFor')), priority: String(values.get('priority')) as Priority, notes: String(values.get('notes') || ''), store_id: String(values.get('store') || '') || null, courier_id: String(values.get('courier') || '') || null, created_by: owner, confirmation_code: confirmationCode, status: 'pending' }); setSaving(false); if (error) { showError(`Não foi possível salvar: ${error.message}`); return }; saved() }
+  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!supabase) return; setSaving(true); const values = new FormData(event.currentTarget); const pickupCode = String(Math.floor(1000 + Math.random() * 9000)); const confirmationCode = String(Math.floor(1000 + Math.random() * 9000)); const orderCode = String(values.get('orderCode') || '').trim().toUpperCase() || `BAM-${Date.now()}`; const { error } = await supabase.from('deliveries').insert({ order_code: orderCode, customer_name: String(values.get('customer')), customer_phone: String(values.get('phone') || '') || null, delivery_address: String(values.get('address')), scheduled_for: scheduleForDatabase(values.get('scheduledFor')), priority: String(values.get('priority')) as Priority, notes: String(values.get('notes') || ''), store_id: String(values.get('store') || '') || null, courier_id: String(values.get('courier') || '') || null, created_by: owner, pickup_code: pickupCode, confirmation_code: confirmationCode, status: 'pending' }); setSaving(false); if (error) { showError(`Não foi possível salvar: ${error.message}`); return }; saved() }
   return <div className="overlay"><form className="new-form" onSubmit={submit}><header><h2>Nova entrega</h2><button className="ghost" type="button" onClick={close}>Fechar</button></header><label>Número do pedido<input name="orderCode" placeholder="Ex.: 1024" /></label><label>Cliente<input name="customer" required /></label><label>Telefone do cliente<input name="phone" inputMode="tel" placeholder="(00) 00000-0000" /></label><label>Endereço<input name="address" required placeholder="Rua, número e bairro" /></label><label>Agendar para<input name="scheduledFor" type="datetime-local" /></label><label>Prioridade<select name="priority" defaultValue="normal"><option value="normal">Normal</option><option value="high">Alta</option></select></label><label>Loja<select name="store"><option value="">Definir depois</option>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label><label>Entregador<select name="courier"><option value="">Atribuir depois</option>{couriers.filter(courier => courier.active).map(courier => <option key={courier.id} value={courier.id}>{courier.full_name}</option>)}</select></label><label>Observação<textarea name="notes" rows={3} /></label><button disabled={saving}>{saving ? 'Salvando…' : 'Salvar pedido'}</button></form></div>
 }
 
