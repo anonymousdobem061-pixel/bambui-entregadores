@@ -287,7 +287,27 @@ function StoreHome({ profile, deliveries, reload, notice, setNotice }: {
   setNotice: (value: string) => void
 }) {
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [online, setOnline] = useState(false)
+  const [onlineSync, setOnlineSync] = useState<'idle' | 'saving' | 'error'>('idle')
   const waiting = deliveries.filter(item => item.status === 'pending' && item.accepted_at)
+
+  useEffect(() => {
+    setOnline(Boolean(profile.is_online))
+  }, [profile.is_online])
+
+  const toggleOnline = async () => {
+    const next = !online
+    setOnlineSync('saving')
+    const { error } = await supabase.from('profiles').update({ is_online: next }).eq('id', profile.id)
+    if (error) {
+      setOnlineSync('error')
+      setNotice(`Não foi possível atualizar disponibilidade: ${error.message}`)
+      return
+    }
+    setOnline(next)
+    setOnlineSync('idle')
+    reload()
+  }
 
   const confirmPickup = async (delivery: Delivery) => {
     const typedCode = window.prompt(`Informe o código de coleta do pedido ${delivery.order_code}.`)?.trim()
@@ -317,6 +337,13 @@ function StoreHome({ profile, deliveries, reload, notice, setNotice }: {
         </div>
         <button className="ghost" onClick={() => void supabase.auth.signOut()}>Sair</button>
       </header>
+
+      <div className={`status-bar ${online ? 'online' : 'offline'}`}>
+        <span><span className="dot" />{online ? 'Disponível para entregas' : 'Offline'}</span>
+        <button className={online ? 'ghost' : ''} onClick={() => void toggleOnline()}>
+          {onlineSync === 'saving' ? 'Salvando…' : online ? 'Ficar offline' : 'Ficar online'}
+        </button>
+      </div>
 
       {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
 
