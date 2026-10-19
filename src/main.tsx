@@ -170,34 +170,134 @@ function ProblemPanel({ item, authorId, close, saved, showError }: { item: Deliv
   return <div className="overlay"><section className="new-form"><header><h2>Preciso de ajuda</h2><button className="ghost" type="button" onClick={close}>Fechar</button></header><p className="helper">Escolha o que aconteceu com o pedido {item.order_code}.</p><div className="store-actions"><button disabled={sending} onClick={() => void report('Cliente não localizado')}>Cliente não localizado</button><button className="ghost" disabled={sending} onClick={() => void report('Endereço incorreto ou incompleto')}>Endereço incorreto</button><button className="ghost" disabled={sending} onClick={() => void report('Problema na coleta da loja')}>Problema na coleta</button><button className="ghost" disabled={sending} onClick={() => void report('Outro problema durante a entrega')}>Outro problema</button></div></section></div>
 }
 
+
 function ContactPanel({ item, viewerId, close, showError }: { item: Delivery; viewerId: string; close: () => void; showError: (value: string) => void }) {
-  const [messages, setMessages] = useState<DeliveryMessage[]>([])
+  const [messages, setMessages] = useState<{ id: string; sender_type: string; message: string; created_at: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+
   const loadMessages = async () => {
     if (!supabase) return
+
     setLoading(true)
-    const { data, error } = await supabase.from('delivery_messages').select('id,author_id,body,created_at').eq('delivery_id', item.id).order('created_at')
+
+    const { data, error } = await supabase.rpc('courier_read_delivery_messages', {
+      p_delivery_id: item.id
+    })
+
     setLoading(false)
-    if (error) { showError(`Não foi possível carregar as mensagens: ${error.message}`); return }
-    setMessages((data ?? []) as DeliveryMessage[])
+
+    if (error) {
+      showError(`Não foi possível carregar as mensagens: ${error.message}`)
+      return
+    }
+
+    setMessages((data ?? []) as typeof messages)
   }
-  useEffect(() => { void loadMessages() }, [item.id])
+
+  useEffect(() => {
+    void loadMessages()
+  }, [item.id])
+
   const send = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
     if (!supabase) return
-    const values = new FormData(event.currentTarget)
+
+    const form = event.currentTarget
+    const values = new FormData(form)
     const body = String(values.get('message') || '').trim()
+
     if (!body) return
+
     setSending(true)
-    const { error } = await supabase.from('delivery_messages').insert({ delivery_id: item.id, author_id: viewerId, body })
+
+    const { error } = await supabase.rpc('courier_send_delivery_message', {
+      p_delivery_id: item.id,
+      p_message: body
+    })
+
     setSending(false)
-    if (error) { showError(`Não foi possível enviar a mensagem: ${error.message}`); return }
-    event.currentTarget.reset()
-    void loadMessages()
+
+    if (error) {
+      showError(`Não foi possível enviar a mensagem: ${error.message}`)
+      return
+    }
+
+    form.reset()
+    await loadMessages()
   }
-  return <div className="overlay"><section className="new-form contact-panel"><header><h2>Contato da entrega</h2><button className="ghost" type="button" onClick={close}>Fechar</button></header><p className="helper">{item.order_code} · {item.customer_name}</p>{item.customer_phone ? <a className="call-customer" href={`tel:${item.customer_phone}`}>Ligar para o cliente</a> : <p className="helper">Telefone do cliente não informado.</p>}<h3>Mensagens com a equipe</h3><div className="messages">{loading ? <p>Carregando mensagens…</p> : messages.length === 0 ? <p>Nenhuma mensagem ainda.</p> : messages.map(message => <article className={message.author_id === viewerId ? 'mine' : ''} key={message.id}><span>{message.author_id === viewerId ? 'Você' : 'Equipe'}</span><p>{message.body}</p><small>{new Date(message.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></article>)}</div><form onSubmit={send}><label>Nova mensagem<textarea name="message" rows={3} maxLength={1000} placeholder="Escreva uma mensagem para a equipe" required /></label><button disabled={sending}>{sending ? 'Enviando…' : 'Enviar mensagem'}</button></form></section></div>
+
+  return (
+    <div className="overlay">
+      <section className="new-form contact-panel">
+        <header>
+          <h2>Chat da entrega</h2>
+          <button className="ghost" type="button" onClick={close}>
+            Fechar
+          </button>
+        </header>
+
+        <p className="helper">
+          {item.order_code} · {item.customer_name}
+        </p>
+
+        {item.customer_phone ? (
+          <a className="call-customer" href={`tel:${item.customer_phone}`}>
+            Ligar para o cliente
+          </a>
+        ) : (
+          <p className="helper">Telefone do cliente não informado.</p>
+        )}
+
+        <h3>Mensagens com o cliente</h3>
+
+        <div className="messages">
+          {loading ? (
+            <p>Carregando mensagens…</p>
+          ) : messages.length === 0 ? (
+            <p>Nenhuma mensagem ainda. Envie uma mensagem para iniciar a conversa.</p>
+          ) : (
+            messages.map(message => (
+              <article
+                className={message.sender_type === 'courier' ? 'mine' : ''}
+                key={message.id}
+              >
+                <span>
+                  {message.sender_type === 'courier' ? 'Equipe de entrega' : 'Cliente'}
+                </span>
+                <p>{message.message}</p>
+                <small>
+                  {new Date(message.created_at).toLocaleString('pt-BR', {
+                    dateStyle: 'short',
+                    timeStyle: 'short'
+                  })}
+                </small>
+              </article>
+            ))
+          )}
+        </div>
+
+        <form onSubmit={send}>
+          <label>
+            Nova mensagem
+            <textarea
+              name="message"
+              rows={3}
+              maxLength={2000}
+              placeholder="Escreva uma mensagem para o cliente"
+              required
+            />
+          </label>
+          <button disabled={sending}>
+            {sending ? 'Enviando…' : 'Enviar mensagem'}
+          </button>
+        </form>
+      </section>
+    </div>
+  )
 }
+
 
 function DeliveryForm({ owner, stores, couriers, close, saved, showError }: { owner: string; stores: Store[]; couriers: Profile[]; close: () => void; saved: () => void; showError: (value: string) => void }) {
   const [saving, setSaving] = useState(false)
