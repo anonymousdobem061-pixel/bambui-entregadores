@@ -36,23 +36,36 @@ function App() {
   const [loading, setLoading] = useState(true)
 
   const load = async (userId: string) => {
-    if (!supabase) return
-    setLoading(true)
-    const me = await supabase.from('profiles').select('id,full_name,role,active,store_id').eq('id', userId).maybeSingle()
-    if (me.error || !me.data) { setNotice('Seu usuário ainda não possui perfil no aplicativo.'); setLoading(false); return }
-    const current = me.data as Profile
-    setProfile(current)
-    if (!current.active) { setNotice('Seu perfil está inativo.'); setLoading(false); return }
-    const [deliveryData, storeData, courierData] = await Promise.all([
-     supabase.from('deliveries').select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,pickup_code,confirmation_code,customer_access_token,accepted_at,collected_at,arrived_at,completed_at,priority,status,store_id,courier_id,scheduled_for,created_at').order('created_at', { ascending: false }),
-      current.role === 'admin' ? supabase.from('profiles').select('id,full_name,role,active,store_id').eq('role', 'courier').order('full_name') : Promise.resolve({ data: [], error: null })
-    ])
-    if (deliveryData.error) setNotice(`Não foi possível carregar as entregas: ${deliveryData.error.message}`)
-    else setDeliveries((deliveryData.data ?? []) as Delivery[])
-    if (!storeData.error) setStores((storeData.data ?? []) as Store[])
-    if (!courierData.error) setCouriers((courierData.data ?? []) as Profile[])
-    setLoading(false)
-  }
+ 
+if (!current.active) {
+  setNotice('Seu perfil está inativo.')
+  setLoading(false)
+  return
+}
+
+const [deliveryData, courierData] = await Promise.all([
+  supabase
+    .from('deliveries')
+    .select('id,order_code,customer_name,customer_phone,delivery_address,notes,cancellation_reason,pickup_code,confirmation_code,customer_access_token,accepted_at,collected_at,arrived_at,completed_at,priority,status,store_id,courier_id,scheduled_for,created_at')
+    .order('created_at', { ascending: false }),
+
+  current.role === 'admin'
+    ? supabase.from('profiles').select('id,full_name,role,active,store_id').eq('role', 'courier').order('full_name')
+    : Promise.resolve({ data: [], error: null })
+])
+
+if (deliveryData.error) {
+  setNotice(`Não foi possível carregar as entregas: ${deliveryData.error.message}`)
+} else {
+  setDeliveries((deliveryData.data ?? []) as Delivery[])
+}
+
+if (!courierData.error) {
+  setCouriers((courierData.data ?? []) as Profile[])
+}
+
+setLoading(false)
+
 
   useEffect(() => {
     if (!supabase) { setLoading(false); return }
