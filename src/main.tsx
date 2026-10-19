@@ -13,8 +13,16 @@ type CustomerDelivery = { order_code: string; customer_name: string; status: Sta
 type DeliveryMessage = { id: string; author_id: string; body: string; created_at: string }
 type DeliveryView = 'all' | 'today' | 'scheduled' | 'unassigned' | 'overdue' | Status
 
-const projectUrl = 'https://quxgxxffiobgqlotpfnl.supabase.co'
-const publishableKey = 'sb_publishable_mxo_SkEaEzkRKQ9jOLgjl'
+const projectUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
+const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
+
+if (!projectUrl || !publishableKey) {
+  throw new Error(
+    'Configuração do Supabase ausente. Defina VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY ' +
+    '(veja env.example). Em desenvolvimento use .env.local; na Vercel configure as mesmas variáveis.'
+  )
+}
+
 const supabase = createClient(projectUrl, publishableKey)
 
 const statusName: Record<Status, string> = {
