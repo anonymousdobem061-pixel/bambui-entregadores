@@ -97,3 +97,12 @@ input,select,textarea{border:1px solid #d9dde3;border-radius:12px;padding:12px;b
   .number strong{font-size:22px}
   button,a{min-height:48px}
 }
+
+.timeline{list-style:none;display:flex;gap:4px;margin:10px 0 8px;padding:0;overflow-x:auto}
+.timeline-step{flex:1;min-width:68px;text-align:center;position:relative}
+.timeline-dot{display:block;width:14px;height:14px;border-radius:50%;margin:0 auto 4px;background:#d9dde3;border:2px solid #d9dde3}
+.timeline-step.done .timeline-dot{background:#12b76a;border-color:#12b76a}
+.timeline-step.current .timeline-dot{background:#e52335;border-color:#e52335;box-shadow:0 0 0 4px #ffe4e6}
+.timeline-label{display:block;font-size:11px;font-weight:800;color:#8a919c}
+.timeline-step.done .timeline-label,.timeline-step.current .timeline-label{color:#171719}
+.timeline-step small{display:block;font-size:10px;color:#8a919c;margin-top:2px}
