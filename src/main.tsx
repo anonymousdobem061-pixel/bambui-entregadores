@@ -588,16 +588,29 @@ function Metric({ title, value }: { title: string; value: number }) {
 
 function DeliveryTimeline({ item }: { item: Delivery }) {
   const steps = [
-    { label: 'Aceita', done: Boolean(item.accepted_at) },
-    { label: 'Coletada', done: Boolean(item.collected_at) },
-    { label: 'Em rota', done: item.status === 'in_progress' || item.status === 'completed' },
-    { label: 'Chegou', done: Boolean(item.arrived_at) },
-    { label: 'Entregue', done: item.status === 'completed' }
+    { key: 'accepted', label: 'Aceita', done: Boolean(item.accepted_at), at: item.accepted_at },
+    { key: 'collected', label: 'Coletada', done: Boolean(item.collected_at), at: item.collected_at },
+    { key: 'moving', label: 'Em rota', done: item.status === 'in_progress' || item.status === 'completed', at: item.collected_at },
+    { key: 'arrived', label: 'Chegou', done: Boolean(item.arrived_at), at: item.arrived_at },
+    { key: 'done', label: 'Entregue', done: item.status === 'completed', at: item.completed_at }
   ]
 
-  return <p className="notes">
-    {steps.map(step => <span key={step.label}>{step.done ? '●' : '○'} {step.label} </span>)}
-  </p>
+  const currentIndex = steps.reduce((acc, step, index) => step.done ? index : acc, -1)
+
+  return (
+    <ol className="timeline" aria-label="Progresso da entrega">
+      {steps.map((step, index) => {
+        const state = step.done ? (index === currentIndex && item.status !== 'completed' ? 'current' : 'done') : 'todo'
+        return (
+          <li key={step.key} className={`timeline-step ${state}`}>
+            <span className="timeline-dot" />
+            <span className="timeline-label">{step.label}</span>
+            {step.at && <small>{scheduleValue(step.at)}</small>}
+          </li>
+        )
+      })}
+    </ol>
+  )
 }
 
 function Card({ item, store, courier, isAdmin, advance, arrive, edit, contact, help }: {
