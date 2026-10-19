@@ -287,53 +287,7 @@ function StoreHome({ profile, deliveries, reload, notice, setNotice }: {
   setNotice: (value: string) => void
 }) {
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
-  const [online, setOnline] = useState(false)
-  const [onlineSync, setOnlineSync] = useState<'idle' | 'saving' | 'error'>('idle')
   const waiting = deliveries.filter(item => item.status === 'pending' && item.accepted_at)
-
-  useEffect(() => {
-    setOnline(Boolean(profile.is_online))
-  }, [profile.is_online])
-
-  const toggleOnline = async () => {
-    const next = !online
-    setOnlineSync('saving')
-    const { error } = await supabase.from('profiles').update({ is_online: next }).eq('id', profile.id)
-    if (error) {
-      setOnlineSync('error')
-      setNotice(`Não foi possível atualizar disponibilidade: ${error.message}`)
-      return
-    }
-    setOnline(next)
-    setOnlineSync('idle')
-    reload()
-  }
-
-  useEffect(() => {
-    const active = deliveries.find(d => d.courier_id === profile.id && d.status === 'in_progress')
-    if (!active || !online) return
-    if (!navigator.geolocation) return
-    let lastSent = 0
-    const watchId = navigator.geolocation.watchPosition(
-      async pos => {
-        const now = Date.now()
-        if (now - lastSent < 20000) return
-        lastSent = now
-        const { error } = await supabase.from('courier_locations').upsert({
-          courier_id: profile.id,
-          delivery_id: active.id,
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          updated_at: new Date().toISOString()
-        })
-        if (error) setNotice(`Falha ao enviar localização: ${error.message}`)
-      },
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 15000, timeout: 15000 }
-    )
-    return () => navigator.geolocation.clearWatch(watchId)
-  }, [deliveries, online, profile.id])
 
   const confirmPickup = async (delivery: Delivery) => {
     const typedCode = window.prompt(`Informe o código de coleta do pedido ${delivery.order_code}.`)?.trim()
@@ -363,13 +317,6 @@ function StoreHome({ profile, deliveries, reload, notice, setNotice }: {
         </div>
         <button className="ghost" onClick={() => void supabase.auth.signOut()}>Sair</button>
       </header>
-
-      <div className={`status-bar ${online ? 'online' : 'offline'}`}>
-        <span><span className="dot" />{online ? 'Disponível para entregas' : 'Offline'}</span>
-        <button className={online ? 'ghost' : ''} onClick={() => void toggleOnline()}>
-          {onlineSync === 'saving' ? 'Salvando…' : online ? 'Ficar offline' : 'Ficar online'}
-        </button>
-      </div>
 
       {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
 
